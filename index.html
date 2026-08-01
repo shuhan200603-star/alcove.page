@@ -733,6 +733,11 @@ document.addEventListener('paste', async e => {
   drawThumbs();
 });
 
+/* 清掉旧版本留下的 Service Worker（见 sw.js）。这里不做离线缓存。 */
+if ('serviceWorker' in navigator && location.protocol === 'https:'){
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+
 /* ---------- 启动 ---------- */
 setTheme(load(KEY.theme, 'lavender'));
 setFont(load(KEY.font, 'wenkai'));
