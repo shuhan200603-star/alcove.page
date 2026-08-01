@@ -350,6 +350,10 @@ header::before{
 #settings.open{transform:translate3d(0,0,0)}
 #settings h2{margin:0 0 6px; font-size:21px; font-weight:var(--w-strong)}
 #settings .hint{margin:0 0 18px; font-size:13.5px; color:var(--ink-soft); line-height:1.5}
+#settings .hint code{
+  font:inherit; font-size:.94em; padding:1px 5px; border-radius:6px;
+  background:var(--glass-strong); border:.5px solid var(--glass-line);
+}
 label{display:block; font-size:13px; color:var(--ink-soft); margin:0 0 7px 4px}
 .field{
   width:100%; padding:14px 16px; border-radius:var(--r-md); margin-bottom:16px;
@@ -446,9 +450,9 @@ label{display:block; font-size:13px; color:var(--ink-soft); margin:0 0 7px 4px}
 <section id="settings">
   <div class="grab"></div>
   <h2>连接</h2>
-  <p class="hint">填你自己服务器的地址。密钥留在服务器上，前端碰不到。留空则用本地演示模式。</p>
+  <p class="hint">默认连同源的 <code>/api/chat</code>，跟后端一起部署时不用改。密钥留在服务器上，前端碰不到。</p>
   <label for="f-api">服务器地址</label>
-  <input class="field" id="f-api" type="url" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://你的域名/api/chat">
+  <input class="field" id="f-api" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="/api/chat">
   <label for="f-mcp">记忆库</label>
   <input class="field" id="f-mcp" type="url" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://你的域名/mcp">
   <button class="primary" id="btn-save">保存</button>
@@ -469,7 +473,10 @@ const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } cat
 /* ---------- 状态 ---------- */
 let sessions = load(KEY.sessions, []);
 let currentId = load(KEY.current, null);
-let conf = load(KEY.conf, { api:'', mcp:'' });
+/* 同源 /api/chat 是默认后端，页面跟它一起部署时开箱即用。
+   若该路径不存在（比如页面被单独挂到别处），退回本地演示模式。 */
+const SAME_ORIGIN_API = '/api/chat';
+let conf = load(KEY.conf, { api:SAME_ORIGIN_API, mcp:'' });
 let pending = [];          // 待发送的图片
 let busy = false;
 
@@ -626,7 +633,7 @@ function toApiContent(m){
   return blocks.length === 1 && blocks[0].type === 'text' ? m.text : blocks;
 }
 
-const DEMO = '演示模式：还没连上你的服务器。\n\n把 VPS 上的转发地址填进设置里，这里就会换成真的回复。界面的其余部分都是能用的——多开对话、换主题、发图片，随便试。';
+const DEMO = '演示模式：这份页面旁边没有后端。\n\n把服务器地址填进设置里，这里就会换成真的回复。界面的其余部分都是能用的——多开对话、换主题、发图片，随便试。';
 
 async function send(){
   const text = $('#input').value.trim();
@@ -667,12 +674,23 @@ async function callApi(messages){
   const body = { messages: messages.map(m => ({ role:m.role, content:toApiContent(m) })) };
   if (conf.mcp){ body.mcp = conf.mcp; }
 
-  const res = await fetch(conf.api, {
-    method:'POST',
-    headers:{ 'Content-Type':'application/json' },
-    body: JSON.stringify(body)
-  });
+  // 默认地址是猜的，不是用户填的：它打不通只说明这份页面旁边没有后端，
+  // 不值得报错。用户自己填过地址就照实汇报，那种情况值得他知道。
+  const isDefault = conf.api === SAME_ORIGIN_API;
+
+  let res;
+  try {
+    res = await fetch(conf.api, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify(body)
+    });
+  } catch (err) {
+    if (isDefault) return DEMO;
+    throw err;
+  }
   if (!res.ok){
+    if (isDefault && (res.status === 404 || res.status === 405)) return DEMO;
     throw new Error('HTTP ' + res.status + ' ' + (res.statusText || ''));
   }
   const data = await res.json();
