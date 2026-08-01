@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="lavender">
+<html lang="zh-CN" data-theme="lavender" data-font="wenkai">
 <head>
 <meta charset="utf-8">
 <title>Alcove</title>
@@ -10,6 +10,8 @@
 <meta name="apple-mobile-web-app-title" content="Alcove">
 <meta name="theme-color" content="#e8e4f3">
 <link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="fonts/lxgwwenkai-regular.css">
+<link rel="stylesheet" href="fonts/lxgwwenkai-light.css">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23b9a9e0'/%3E%3Cstop offset='1' stop-color='%237c6bb0'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='180' height='180' rx='40' fill='url(%23g)'/%3E%3Ccircle cx='90' cy='90' r='26' fill='%23fff' opacity='.92'/%3E%3C/svg%3E">
 
@@ -26,6 +28,26 @@
   --ease: cubic-bezier(.32,.72,0,1);
   --safe-t: env(safe-area-inset-top, 0px);
   --safe-b: env(safe-area-inset-bottom, 0px);
+}
+
+/* ---- 四套字体 ----
+   楷体笔画本身就有粗细变化，字重压低才不会糊成一团；
+   黑体则需要正常的字重层次。所以两个字重变量跟着字体走。 */
+[data-font="wenkai"]{
+  --font:'LXGW WenKai',"STKaiti","Kaiti SC",-apple-system,"PingFang SC",serif;
+  --w-strong:400; --w-med:400; --track:.3px;
+}
+[data-font="wenkai-light"]{
+  --font:'LXGW WenKai Light','LXGW WenKai',"STKaiti","Kaiti SC",-apple-system,"PingFang SC",serif;
+  --w-strong:400; --w-med:300; --track:.3px;
+}
+[data-font="kai"]{
+  --font:"STKaiti","Kaiti SC","KaiTi","楷体",-apple-system,"PingFang SC",serif;
+  --w-strong:600; --w-med:400; --track:.3px;
+}
+[data-font="sans"]{
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --w-strong:650; --w-med:560; --track:.2px;
 }
 
 /* ---- 四套主题 ---- */
@@ -77,7 +99,7 @@
 *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
 html,body{height:100%; margin:0; overscroll-behavior:none}
 body{
-  font:16px/1.55 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  font:16px/1.62 var(--font);
   color:var(--ink);
   background:var(--bg-2);
   -webkit-font-smoothing:antialiased;
@@ -136,7 +158,7 @@ header::before{
 .icon-btn svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
 
 .title{text-align:center; min-width:0}
-.title h1{margin:0; font-size:17px; font-weight:650; letter-spacing:.2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.title h1{margin:0; font-size:17px; font-weight:var(--w-strong); letter-spacing:var(--track); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
 .title .status{
   margin-top:2px; font-size:12px; color:var(--ink-soft);
   display:flex; align-items:center; justify-content:center; gap:5px;
@@ -253,11 +275,11 @@ header::before{
   background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 55%,#fff),var(--accent));
   box-shadow:0 3px 10px var(--glass-shadow);
 }
-.brand b{font-size:19px; letter-spacing:.4px; font-weight:680}
+.brand b{font-size:19px; letter-spacing:var(--track); font-weight:var(--w-strong)}
 
 .new-chat{
   width:100%; padding:13px; border-radius:var(--r-md); cursor:pointer;
-  font:inherit; font-weight:560; color:var(--ink);
+  font:inherit; font-weight:var(--w-med); color:var(--ink);
   background:var(--glass-strong); border:.5px solid var(--glass-line);
   box-shadow:inset 0 1px 0 rgba(255,255,255,.5);
   display:flex; align-items:center; justify-content:center; gap:7px;
@@ -281,7 +303,24 @@ header::before{
 .sess button:active{opacity:1}
 
 .themes{padding-top:14px; border-top:.5px solid var(--glass-line)}
-.swatches{display:flex; gap:12px; padding:10px 8px 0}
+.swatches{display:flex; gap:12px; padding:10px 8px 14px}
+
+/* 字体选择：每个按钮用它自己代表的字体来显示，所见即所得 */
+.fonts{display:flex; gap:7px; padding:2px 8px 0}
+.fo{
+  flex:1; padding:9px 4px; border-radius:var(--r-sm); cursor:pointer;
+  font-size:15px; line-height:1.2; color:var(--ink);
+  background:var(--glass-strong); border:.5px solid transparent;
+  box-shadow:inset 0 .5px 0 rgba(255,255,255,.5);
+  transition:transform .18s var(--ease);
+}
+.fo:active{transform:scale(.94)}
+.fo[aria-pressed="true"]{border-color:var(--accent); color:var(--accent)}
+[data-theme="night"] .fo[aria-pressed="true"]{color:var(--ink)}
+.fo[data-f="wenkai"]{font-family:'LXGW WenKai',"STKaiti",serif}
+.fo[data-f="wenkai-light"]{font-family:'LXGW WenKai Light',"STKaiti",serif}
+.fo[data-f="kai"]{font-family:"STKaiti","Kaiti SC","KaiTi","楷体",serif}
+.fo[data-f="sans"]{font-family:-apple-system,"PingFang SC",sans-serif}
 .sw{
   width:38px;height:38px;border-radius:50%; cursor:pointer; padding:0;
   border:2px solid transparent; background-clip:padding-box;
@@ -309,7 +348,7 @@ header::before{
   max-height:86vh; overflow-y:auto;
 }
 #settings.open{transform:translate3d(0,0,0)}
-#settings h2{margin:0 0 6px; font-size:21px; font-weight:660}
+#settings h2{margin:0 0 6px; font-size:21px; font-weight:var(--w-strong)}
 #settings .hint{margin:0 0 18px; font-size:13.5px; color:var(--ink-soft); line-height:1.5}
 label{display:block; font-size:13px; color:var(--ink-soft); margin:0 0 7px 4px}
 .field{
@@ -322,7 +361,7 @@ label{display:block; font-size:13px; color:var(--ink-soft); margin:0 0 7px 4px}
 .field:focus{border-color:var(--accent)}
 .primary{
   width:100%; padding:15px; border-radius:var(--r-md); border:none; cursor:pointer;
-  font:inherit; font-weight:620; font-size:16px;
+  font:inherit; font-weight:var(--w-strong); font-size:16px;
   background:var(--accent); color:var(--accent-ink);
   box-shadow:0 6px 20px color-mix(in srgb,var(--accent) 38%,transparent);
   transition:transform .18s var(--ease);
@@ -394,6 +433,13 @@ label{display:block; font-size:13px; color:var(--ink-soft); margin:0 0 7px 4px}
       <button class="sw" data-t="milktea" aria-label="奶茶"></button>
       <button class="sw" data-t="night" aria-label="深夜"></button>
     </div>
+    <div class="sec" style="padding:0 8px 2px">字体</div>
+    <div class="fonts">
+      <button class="fo" data-f="wenkai" aria-label="霞鹜文楷">文楷</button>
+      <button class="fo" data-f="wenkai-light" aria-label="霞鹜文楷 细">细楷</button>
+      <button class="fo" data-f="kai" aria-label="系统楷体">楷体</button>
+      <button class="fo" data-f="sans" aria-label="黑体">黑体</button>
+    </div>
   </div>
 </aside>
 
@@ -415,7 +461,7 @@ label{display:block; font-size:13px; color:var(--ink-soft); margin:0 0 7px 4px}
 'use strict';
 
 const $  = s => document.querySelector(s);
-const KEY = { sessions:'alcove.sessions', current:'alcove.current', theme:'alcove.theme', conf:'alcove.conf' };
+const KEY = { sessions:'alcove.sessions', current:'alcove.current', theme:'alcove.theme', font:'alcove.font', conf:'alcove.conf' };
 
 const load = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
@@ -451,6 +497,11 @@ function setTheme(t){
   document.querySelectorAll('.sw').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.t === t)));
   const c = getComputedStyle(document.documentElement).getPropertyValue('--bg-2').trim();
   document.querySelector('meta[name=theme-color]').content = c || '#e8e4f3';
+}
+function setFont(f){
+  document.documentElement.dataset.font = f;
+  save(KEY.font, f);
+  document.querySelectorAll('.fo').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.f === f)));
 }
 
 /* ---------- 渲染 ---------- */
@@ -661,6 +712,7 @@ $('#input').addEventListener('keydown', e => {
 });
 
 document.querySelectorAll('.sw').forEach(b => { b.onclick = () => setTheme(b.dataset.t); });
+document.querySelectorAll('.fo').forEach(b => { b.onclick = () => setFont(b.dataset.f); });
 
 $('#btn-save').onclick = () => {
   conf = { api: $('#f-api').value.trim(), mcp: $('#f-mcp').value.trim() };
@@ -683,6 +735,7 @@ document.addEventListener('paste', async e => {
 
 /* ---------- 启动 ---------- */
 setTheme(load(KEY.theme, 'lavender'));
+setFont(load(KEY.font, 'wenkai'));
 if (!sessions.length) newSession(false);
 drawStatus(); drawAll(); refreshSend();
 
