@@ -363,6 +363,25 @@ label{display:block; font-size:13px; color:var(--ink-soft); margin:0 0 7px 4px}
 }
 .field::placeholder{color:var(--ink-soft); opacity:.6}
 .field:focus{border-color:var(--accent)}
+/* 记忆库开关 */
+.toggle{
+  width:100%; display:flex; align-items:center; justify-content:space-between; gap:12px;
+  padding:13px 16px; margin-bottom:12px; border-radius:var(--r-md); cursor:pointer;
+  font:inherit; font-size:15px; color:var(--ink); text-align:left;
+  background:var(--glass-strong); border:.5px solid var(--glass-line);
+}
+.toggle i{
+  flex:none; width:46px; height:28px; border-radius:999px; position:relative;
+  background:var(--ink-soft); opacity:.35; transition:background .22s, opacity .22s;
+}
+.toggle i::after{
+  content:''; position:absolute; top:3px; left:3px; width:22px; height:22px;
+  border-radius:50%; background:#fff; box-shadow:0 1px 4px rgba(0,0,0,.25);
+  transition:transform .22s var(--ease);
+}
+.toggle[aria-checked="true"] i{background:var(--accent); opacity:1}
+.toggle[aria-checked="true"] i::after{transform:translateX(18px)}
+
 .primary{
   width:100%; padding:15px; border-radius:var(--r-md); border:none; cursor:pointer;
   font:inherit; font-weight:var(--w-strong); font-size:16px;
@@ -453,8 +472,11 @@ label{display:block; font-size:13px; color:var(--ink-soft); margin:0 0 7px 4px}
   <p class="hint">默认连同源的 <code>/api/chat</code>，跟后端一起部署时不用改。密钥留在服务器上，前端碰不到。</p>
   <label for="f-api">服务器地址</label>
   <input class="field" id="f-api" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="/api/chat">
-  <label for="f-mcp">记忆库</label>
-  <input class="field" id="f-mcp" type="url" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://你的域名/mcp">
+  <label>记忆库</label>
+  <button class="toggle" id="f-memory" role="switch" aria-checked="true">
+    <span>让它记得我们聊过什么</span><i></i>
+  </button>
+  <p class="hint" id="mem-detail" style="margin:-6px 0 18px 4px;font-size:12.5px"></p>
   <button class="primary" id="btn-save">保存</button>
 </section>
 
@@ -476,7 +498,8 @@ let currentId = load(KEY.current, null);
 /* 同源 /api/chat 是默认后端，页面跟它一起部署时开箱即用。
    若该路径不存在（比如页面被单独挂到别处），退回本地演示模式。 */
 const SAME_ORIGIN_API = '/api/chat';
-let conf = load(KEY.conf, { api:SAME_ORIGIN_API, mcp:'' });
+let conf = load(KEY.conf, { api:SAME_ORIGIN_API, memory:true });
+if (conf.memory === undefined) conf.memory = true;   // 从旧版本升上来的配置
 let pending = [];          // 待发送的图片
 let busy = false;
 
@@ -555,11 +578,30 @@ function removeSession(id){
 function drawAll(){ drawMessages(); drawSessions(); }
 function scrollDown(){ requestAnimationFrame(() => { const s = $('#scroll'); s.scrollTop = s.scrollHeight; }); }
 
-function drawStatus(){
+/* 记忆库的死活由后端说了算，不是由前端填没填地址决定的——
+   问 /api/memory/status，它探一下 Ombre Brain 的 /health 再回话。 */
+function statusUrl(){
+  return /\/chat$/.test(conf.api) ? conf.api.replace(/\/chat$/, '/memory/status') : '';
+}
+function paintStatus(on, label, detail){
   const el = $('#mem-status');
-  const on = !!conf.mcp;
   el.classList.toggle('on', on);
-  el.querySelector('span').textContent = on ? '记忆库已连接' : '记忆库未连接';
+  el.querySelector('span').textContent = label;
+  const d = $('#mem-detail');
+  if (d) d.textContent = detail || '';
+}
+async function drawStatus(){
+  if (!conf.memory){ paintStatus(false, '记忆库已关闭', '这台设备上不检索记忆。'); return; }
+  const url = statusUrl();
+  if (!url){ paintStatus(false, '记忆库未知', '服务器地址不是标准的 /api/chat，探测不了。'); return; }
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data && data.ok){ paintStatus(true, '记忆库已连接', '后端探活正常。'); }
+    else { paintStatus(false, '记忆库连不上', '后端探活失败：' + ((data && (data.error || data.status_code)) || '未知原因')); }
+  } catch {
+    paintStatus(false, '记忆库未知', '探测请求本身失败了。');
+  }
 }
 function drawThumbs(){
   const box = $('#thumbs');
@@ -586,7 +628,9 @@ function toast(msg){
 /* ---------- 面板 ---------- */
 function openSidebar(){ $('#sidebar').classList.add('open'); $('#scrim').classList.add('show'); }
 function openSettings(){
-  $('#f-api').value = conf.api; $('#f-mcp').value = conf.mcp;
+  $('#f-api').value = conf.api;
+  $('#f-memory').setAttribute('aria-checked', String(conf.memory !== false));
+  drawStatus();
   $('#settings').classList.add('open'); $('#scrim').classList.add('show');
 }
 function closePanels(){
@@ -671,8 +715,10 @@ async function send(){
 function demo(){ return new Promise(r => setTimeout(() => r(DEMO), 650)); }
 
 async function callApi(messages){
-  const body = { messages: messages.map(m => ({ role:m.role, content:toApiContent(m) })) };
-  if (conf.mcp){ body.mcp = conf.mcp; }
+  const body = {
+    messages: messages.map(m => ({ role:m.role, content:toApiContent(m) })),
+    use_memory: conf.memory !== false,
+  };
 
   // 默认地址是猜的，不是用户填的：它打不通只说明这份页面旁边没有后端，
   // 不值得报错。用户自己填过地址就照实汇报，那种情况值得他知道。
@@ -732,8 +778,15 @@ $('#input').addEventListener('keydown', e => {
 document.querySelectorAll('.sw').forEach(b => { b.onclick = () => setTheme(b.dataset.t); });
 document.querySelectorAll('.fo').forEach(b => { b.onclick = () => setFont(b.dataset.f); });
 
+$('#f-memory').onclick = function(){
+  this.setAttribute('aria-checked', this.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
+};
+
 $('#btn-save').onclick = () => {
-  conf = { api: $('#f-api').value.trim(), mcp: $('#f-mcp').value.trim() };
+  conf = {
+    api: $('#f-api').value.trim(),
+    memory: $('#f-memory').getAttribute('aria-checked') === 'true',
+  };
   save(KEY.conf, conf);
   drawStatus(); closePanels();
   toast(conf.api ? '已连接到你的服务器' : '已切回演示模式');

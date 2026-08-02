@@ -12,20 +12,26 @@
 | `fonts/` | 霞鹜文楷 Regular / Light，自托管 |
 | `manifest.webmanifest` | PWA 清单 |
 | `icon.svg` | 应用图标 |
+| `sw.js` | 墓碑 Service Worker，清掉旧版本留下的缓存 |
+| `backend/server.py` | FastAPI 后端：转发 LLM、检索记忆库 |
 
 ## 部署
 
-整个目录放进静态目录即可：
+前端进静态目录，后端进它上一层：
 
 ```bash
-rsync -a --exclude .git ./ root@你的服务器:/opt/alcove/static/
+# 首次
+cd /opt/alcove && git clone https://github.com/shuhan200603-star/alcove.page frontend
+
+# 每次更新
+git -C /opt/alcove/frontend pull
+rsync -a --delete --exclude .git --exclude backend --exclude README.md \
+      /opt/alcove/frontend/ /opt/alcove/static/
+cp /opt/alcove/frontend/backend/server.py /opt/alcove/server.py
+systemctl restart alcove     # 只有 server.py 变了才需要
 ```
 
-或者直接在服务器上 clone：
-
-```bash
-cd /opt/alcove/static && git clone https://github.com/shuhan200603-star/alcove.page .
-```
+`--exclude backend` 是必须的：静态目录会被公开访问，后端代码不该出现在那里。
 
 只复制 `index.html` 也能跑——字体会退回系统楷体，图标是内嵌的 data URI，iOS 添加到主屏幕照常工作。
 
@@ -58,7 +64,9 @@ cd /opt/alcove/static && git clone https://github.com/shuhan200603-star/alcove.p
 }
 ```
 
-设置里填了「记忆库」地址时，请求体额外带一个顶层 `mcp` 字段。
+顶层还有一个可选的 `use_memory` 布尔值（默认 `true`）。设为 `false` 时后端跳过记忆检索。
+
+后端另有 `GET /api/memory/status`，返回 `{"ok": bool, ...}`，顶栏的状态点就是问它。
 
 **响应**
 
@@ -68,7 +76,19 @@ cd /opt/alcove/static && git clone https://github.com/shuhan200603-star/alcove.p
 
 多个 text 块会按顺序换行拼接。非 2xx 会在气泡里显示状态码。
 
-API 密钥只放在服务器上，前端不接触。
+API 密钥只放在服务器上，前端不接触——`server.py` 从环境变量读，不落在代码里。
+
+## 后端
+
+`backend/server.py` 是一层薄适配器，做三件事：
+
+1. **转发**。把消息发给 `LLM_BASE`（默认 OpenRouter 的 `/chat/completions`），把回复转成上面那个 `{content:[...]}` 形状。
+2. **检索记忆**。每轮先拿最新一条用户消息去问 Ombre Brain 的 `breath` 工具（MCP over streamable-http），检索到的内容作为额外的 system 段落一起发出去。记忆库超时或出错一律静默跳过，不拖垮聊天。
+3. **翻译图片块**。前端按 Anthropic 的 `{type:"image", source:{...}}` 发图，OpenAI 兼容的 `/chat/completions` 只认 `image_url` —— `_to_openai_content()` 在转发前统一翻译。换后端时只动这个函数，界面不用跟着改。
+
+全部配置走环境变量：`LLM_API_KEY`、`LLM_BASE`、`LLM_MODEL`、`MEMORY_MCP_URL`、`MEMORY_TOKEN`、`MEMORY_TIMEOUT`、`MEMORY_MAX_RESULTS`。
+
+`/api/chat` 目前没有访问控制——任何人打开站点就能消耗你的 API 额度。
 
 ## 关于「液态玻璃」
 
@@ -85,7 +105,7 @@ API 密钥只放在服务器上，前端不接触。
 | `alcove.sessions` | 全部会话与消息 |
 | `alcove.current` | 当前会话 id |
 | `alcove.theme` | 主题 |
-| `alcove.conf` | 服务器地址、记忆库地址 |
+| `alcove.conf` | 服务器地址、记忆库开关 |
 
 ## 主题
 
