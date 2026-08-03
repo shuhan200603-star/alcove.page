@@ -11,7 +11,7 @@
 | `index.html` | 全部界面与逻辑，无构建步骤 |
 | `fonts/` | 霞鹜文楷 Regular / Light，自托管 |
 | `manifest.webmanifest` | PWA 清单 |
-| `icon.svg` | 应用图标 |
+| `icons/` | 三套图标，各 4 个尺寸 + SVG 源文件 |
 | `sw.js` | 墓碑 Service Worker，清掉旧版本留下的缓存 |
 | `backend/server.py` | FastAPI 后端：转发 LLM、检索记忆库 |
 
@@ -33,7 +33,7 @@ systemctl restart alcove     # 只有 server.py 变了才需要
 
 `--exclude backend` 是必须的：静态目录会被公开访问，后端代码不该出现在那里。
 
-只复制 `index.html` 也能跑——字体会退回系统楷体，图标是内嵌的 data URI，iOS 添加到主屏幕照常工作。
+前端是一组静态文件，没有构建步骤——`index.html` 加上 `fonts/`、`icons/` 就是全部。
 
 ## 后端约定
 
@@ -106,6 +106,26 @@ API 密钥只放在服务器上，前端不接触——`server.py` 从环境变�
 | `alcove.current` | 当前会话 id |
 | `alcove.theme` | 主题 |
 | `alcove.conf` | 服务器地址、记忆库开关 |
+
+## 图标
+
+侧栏「图标」三选一，默认「龛里」：
+
+| | |
+|---|---|
+| 龛里 | 夜色天，月亮在右上 |
+| 月在左 | 同上，月亮挪到左上角 |
+| 浅色 | 白天的天，壁龛是暗的那块 |
+
+每套是 `icons/<名字>.svg` 加 180 / 192 / 512 / 512-maskable 四个 PNG。SVG 给标签页用（任意尺寸都清晰），PNG 给 iOS 和 Android 装应用用。
+
+切换改的是 `<link rel="icon">` 和 `<link rel="apple-touch-icon">` 的 `href`：
+
+- **标签页图标**立刻跟着变
+- **主屏幕图标不会**。iOS 在「添加到主屏幕」那一刻就把图存进系统了，网页之后够不着它——要换只能删掉重加
+- **`manifest.webmanifest` 是静态文件**，改不了，所以 Android 的安装图标固定是「龛里」那套
+
+新增一套：往 `icons/` 放好文件，再往侧栏加一个 `.ic` 按钮即可。
 
 ## 主题
 

@@ -12,8 +12,8 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="stylesheet" href="fonts/lxgwwenkai-regular.css">
 <link rel="stylesheet" href="fonts/lxgwwenkai-light.css">
-<link rel="icon" href="icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23b9a9e0'/%3E%3Cstop offset='1' stop-color='%237c6bb0'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='180' height='180' rx='40' fill='url(%23g)'/%3E%3Ccircle cx='90' cy='90' r='26' fill='%23fff' opacity='.92'/%3E%3C/svg%3E">
+<link rel="icon" id="fav" href="icons/night.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" id="fav-apple" href="icons/night-180.png">
 
 <style>
 /* ============================================================
@@ -321,6 +321,19 @@ header::before{
 .fo[data-f="wenkai-light"]{font-family:'LXGW WenKai Light',"STKaiti",serif}
 .fo[data-f="kai"]{font-family:"STKaiti","Kaiti SC","KaiTi","楷体",serif}
 .fo[data-f="sans"]{font-family:-apple-system,"PingFang SC",sans-serif}
+
+/* 图标选择：按钮本身就是那个图标 */
+.icons{display:flex; gap:10px; padding:2px 8px 0}
+.ic{
+  width:46px; height:46px; border-radius:12px; cursor:pointer; padding:0;
+  background-size:cover; background-position:center;
+  border:2px solid transparent; background-clip:padding-box;
+  box-shadow:0 3px 10px var(--glass-shadow);
+  transition:transform .2s var(--ease);
+}
+.ic:active{transform:scale(.9)}
+.ic[aria-pressed="true"]{border-color:var(--accent); transform:scale(1.06)}
+.tip{margin:12px 8px 0; font-size:11.5px; line-height:1.5; color:var(--ink-soft); opacity:.8}
 .sw{
   width:38px;height:38px;border-radius:50%; cursor:pointer; padding:0;
   border:2px solid transparent; background-clip:padding-box;
@@ -463,6 +476,16 @@ label{display:block; font-size:13px; color:var(--ink-soft); margin:0 0 7px 4px}
       <button class="fo" data-f="kai" aria-label="系统楷体">楷体</button>
       <button class="fo" data-f="sans" aria-label="黑体">黑体</button>
     </div>
+    <div class="sec" style="padding:14px 8px 2px">图标</div>
+    <div class="icons">
+      <button class="ic" data-i="night" aria-label="龛里"
+              style="background-image:url(icons/night-180.png)"></button>
+      <button class="ic" data-i="night-left" aria-label="月在左"
+              style="background-image:url(icons/night-left-180.png)"></button>
+      <button class="ic" data-i="day" aria-label="浅色"
+              style="background-image:url(icons/day-180.png)"></button>
+    </div>
+    <p class="tip">标签页立刻就换。主屏幕上那个是添加时存下来的，想换得删掉重加一次。</p>
   </div>
 </aside>
 
@@ -487,7 +510,7 @@ label{display:block; font-size:13px; color:var(--ink-soft); margin:0 0 7px 4px}
 'use strict';
 
 const $  = s => document.querySelector(s);
-const KEY = { sessions:'alcove.sessions', current:'alcove.current', theme:'alcove.theme', font:'alcove.font', conf:'alcove.conf' };
+const KEY = { sessions:'alcove.sessions', current:'alcove.current', theme:'alcove.theme', font:'alcove.font', icon:'alcove.icon', conf:'alcove.conf' };
 
 const load = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
@@ -527,6 +550,15 @@ function setTheme(t){
   document.querySelectorAll('.sw').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.t === t)));
   const c = getComputedStyle(document.documentElement).getPropertyValue('--bg-2').trim();
   document.querySelector('meta[name=theme-color]').content = c || '#e8e4f3';
+}
+/* 图标换的是 <link> 的 href。标签页图标会立刻跟着变；
+   主屏幕上那个不会——iOS 在"添加到主屏幕"那一刻就把图存进系统了，
+   之后网页再改也够不着它，只能删掉重加。 */
+function setIcon(i){
+  save(KEY.icon, i);
+  $('#fav').href = `icons/${i}.svg`;
+  $('#fav-apple').href = `icons/${i}-180.png`;
+  document.querySelectorAll('.ic').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.i === i)));
 }
 function setFont(f){
   document.documentElement.dataset.font = f;
@@ -777,6 +809,7 @@ $('#input').addEventListener('keydown', e => {
 
 document.querySelectorAll('.sw').forEach(b => { b.onclick = () => setTheme(b.dataset.t); });
 document.querySelectorAll('.fo').forEach(b => { b.onclick = () => setFont(b.dataset.f); });
+document.querySelectorAll('.ic').forEach(b => { b.onclick = () => setIcon(b.dataset.i); });
 
 $('#f-memory').onclick = function(){
   this.setAttribute('aria-checked', this.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
@@ -812,6 +845,7 @@ if ('serviceWorker' in navigator && location.protocol === 'https:'){
 /* ---------- 启动 ---------- */
 setTheme(load(KEY.theme, 'lavender'));
 setFont(load(KEY.font, 'wenkai'));
+setIcon(load(KEY.icon, 'night'));
 if (!sessions.length) newSession(false);
 drawStatus(); drawAll(); refreshSend();
 
