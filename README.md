@@ -14,6 +14,7 @@
 | `icons/` | 三套图标，各 4 个尺寸 + SVG 源文件 |
 | `sw.js` | 墓碑 Service Worker，清掉旧版本留下的缓存 |
 | `backend/server.py` | FastAPI 后端：转发 LLM、检索记忆库 |
+| `deploy.sh` | 服务器上一步部署 |
 
 ## 部署
 
@@ -23,15 +24,15 @@
 # 首次
 cd /opt/alcove && git clone https://github.com/shuhan200603-star/alcove.page frontend
 
-# 每次更新
-git -C /opt/alcove/frontend pull
-rsync -a --delete --exclude .git --exclude backend --exclude README.md \
-      /opt/alcove/frontend/ /opt/alcove/static/
-cp /opt/alcove/frontend/backend/server.py /opt/alcove/server.py
-systemctl restart alcove     # 只有 server.py 变了才需要
+# 之后每次更新，就这一行
+sudo /opt/alcove/frontend/deploy.sh
 ```
 
-`--exclude backend` 是必须的：静态目录会被公开访问，后端代码不该出现在那里。
+`deploy.sh` 拉代码、同步前端，只在 `backend/server.py` 真的变了时才复制并重启——重启会掐断正在进行的对话，能免则免。
+
+`backend/` 不进静态目录：那个目录是公开的，后端代码不该出现在那里。
+
+**别在 `/opt/alcove/frontend/` 里改文件。** 它是仓库的一面镜子，改了下次 `git pull --ff-only` 会直接失败。要改代码就改仓库，再 pull 下来。
 
 前端是一组静态文件，没有构建步骤——`index.html` 加上 `fonts/`、`icons/` 就是全部。
 
