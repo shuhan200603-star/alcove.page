@@ -65,7 +65,7 @@ sudo /opt/alcove/frontend/deploy.sh
 }
 ```
 
-顶层还有一个可选的 `use_memory` 布尔值（默认 `true`）。设为 `false` 时后端跳过记忆检索。
+顶层还有两个可选布尔值，都默认 `true`：`use_memory` 关掉记忆检索，`use_web` 关掉联网搜索。
 
 后端另有 `GET /api/memory/status`，返回 `{"ok": bool, ...}`，顶栏的状态点就是问它。
 
@@ -86,8 +86,11 @@ API 密钥只放在服务器上，前端不接触——`server.py` 从环境变�
 1. **转发**。把消息发给 `LLM_BASE`（默认 OpenRouter 的 `/chat/completions`），把回复转成上面那个 `{content:[...]}` 形状。
 2. **检索记忆**。每轮先拿最新一条用户消息去问 Ombre Brain 的 `breath` 工具（MCP over streamable-http），检索到的内容作为额外的 system 段落一起发出去。记忆库超时或出错一律静默跳过，不拖垮聊天。
 3. **翻译图片块**。前端按 Anthropic 的 `{type:"image", source:{...}}` 发图，OpenAI 兼容的 `/chat/completions` 只认 `image_url` —— `_to_openai_content()` 在转发前统一翻译。换后端时只动这个函数，界面不用跟着改。
+4. **联网搜索**。挂上 OpenRouter 的 `plugins: [{"id": "web"}]`。对 `anthropic/claude-*` 它默认走 `engine: "native"`，底层就是 Anthropic 官方的 web search tool——所以搜不搜由模型自己判断，不需要在这里做关键词粗筛。引用过的来源在 `message.annotations` 里，`_format_sources()` 把它们附在正文末尾（前端只渲染文本，不然就丢了）。
 
-全部配置走环境变量：`LLM_API_KEY`、`LLM_BASE`、`LLM_MODEL`、`MEMORY_MCP_URL`、`MEMORY_TOKEN`、`MEMORY_TIMEOUT`、`MEMORY_MAX_RESULTS`。
+联网按 Anthropic 官方定价透传：约 $10 / 1000 次搜索，外加搜索结果占用的 token。开着不等于每轮都花钱——只有模型真的去搜才计费。用 `WEB_SEARCH=0` 可以在服务端整体关掉。
+
+全部配置走环境变量：`LLM_API_KEY`、`LLM_BASE`、`LLM_MODEL`、`MEMORY_MCP_URL`、`MEMORY_TOKEN`、`MEMORY_TIMEOUT`、`MEMORY_MAX_RESULTS`、`WEB_SEARCH`。
 
 `/api/chat` 目前没有访问控制——任何人打开站点就能消耗你的 API 额度。
 
@@ -106,7 +109,7 @@ API 密钥只放在服务器上，前端不接触——`server.py` 从环境变�
 | `alcove.sessions` | 全部会话与消息 |
 | `alcove.current` | 当前会话 id |
 | `alcove.theme` | 主题 |
-| `alcove.conf` | 服务器地址、记忆库开关 |
+| `alcove.conf` | 服务器地址、记忆库和联网开关 |
 
 ## 图标
 

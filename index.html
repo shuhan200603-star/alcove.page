@@ -501,6 +501,11 @@ label{display:block; font-size:13px; color:var(--ink-soft); margin:0 0 7px 4px}
     <span>让它记得我们聊过什么</span><i></i>
   </button>
   <p class="hint" id="mem-detail" style="margin:-6px 0 18px 4px;font-size:12.5px"></p>
+  <label>联网搜索</label>
+  <button class="toggle" id="f-web" role="switch" aria-checked="true">
+    <span>需要时让它去查网上</span><i></i>
+  </button>
+  <p class="hint" style="margin:-6px 0 18px 4px;font-size:12.5px">搜不搜由它自己判断，不是每句话都搜。</p>
   <button class="primary" id="btn-save">保存</button>
 </section>
 
@@ -522,8 +527,10 @@ let currentId = load(KEY.current, null);
 /* 同源 /api/chat 是默认后端，页面跟它一起部署时开箱即用。
    若该路径不存在（比如页面被单独挂到别处），退回本地演示模式。 */
 const SAME_ORIGIN_API = '/api/chat';
-let conf = load(KEY.conf, { api:SAME_ORIGIN_API, memory:true });
-if (conf.memory === undefined) conf.memory = true;   // 从旧版本升上来的配置
+let conf = load(KEY.conf, { api:SAME_ORIGIN_API, memory:true, web:true });
+// 从旧版本升上来的配置可能缺这两项
+if (conf.memory === undefined) conf.memory = true;
+if (conf.web === undefined) conf.web = true;
 let pending = [];          // 待发送的图片
 let busy = false;
 
@@ -672,6 +679,7 @@ function openSidebar(){ $('#sidebar').classList.add('open'); $('#scrim').classLi
 function openSettings(){
   $('#f-api').value = conf.api;
   $('#f-memory').setAttribute('aria-checked', String(conf.memory !== false));
+  $('#f-web').setAttribute('aria-checked', String(conf.web !== false));
   drawStatus();
   $('#settings').classList.add('open'); $('#scrim').classList.add('show');
 }
@@ -760,6 +768,7 @@ async function callApi(messages){
   const body = {
     messages: messages.map(m => ({ role:m.role, content:toApiContent(m) })),
     use_memory: conf.memory !== false,
+    use_web: conf.web !== false,
   };
 
   // 默认地址是猜的，不是用户填的：它打不通只说明这份页面旁边没有后端，
@@ -821,14 +830,17 @@ document.querySelectorAll('.sw').forEach(b => { b.onclick = () => setTheme(b.dat
 document.querySelectorAll('.fo').forEach(b => { b.onclick = () => setFont(b.dataset.f); });
 document.querySelectorAll('.ic').forEach(b => { b.onclick = () => setIcon(b.dataset.i); });
 
-$('#f-memory').onclick = function(){
-  this.setAttribute('aria-checked', this.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
-};
+document.querySelectorAll('.toggle').forEach(t => {
+  t.onclick = function(){
+    this.setAttribute('aria-checked', this.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
+  };
+});
 
 $('#btn-save').onclick = () => {
   conf = {
     api: $('#f-api').value.trim(),
     memory: $('#f-memory').getAttribute('aria-checked') === 'true',
+    web: $('#f-web').getAttribute('aria-checked') === 'true',
   };
   save(KEY.conf, conf);
   drawStatus(); closePanels();

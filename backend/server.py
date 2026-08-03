@@ -24,6 +24,14 @@ MEMORY_MAX_RESULTS = int(os.environ.get("MEMORY_MAX_RESULTS", "3"))
 # breath 在检索失败/无结果时会返回这些中文提示语，它们不是真正的记忆，别塞给 LLM。
 _MEMORY_SENTINELS = ("检索过程出错", "记忆系统暂时无法访问", "权重池平静", "没有找到")
 
+# --- 联网搜索 ---
+# OpenRouter 的 web 插件：对 anthropic/claude-* 默认走 engine="native"，
+# 底层就是 Anthropic 自己的 web search tool。搜不搜由模型自己判断，
+# 所以不需要在这里做关键词粗筛——它不会每句话都去搜。
+# 按 Anthropic 官方定价透传（约 $10 / 1000 次搜索，外加结果占用的 token）。
+WEB_SEARCH_DEFAULT = os.environ.get("WEB_SEARCH", "1").strip().lower() \
+    not in ("0", "false", "no", "off", "")
+
 app = FastAPI()
 
 
@@ -79,6 +87,27 @@ def _to_openai_content(content):
 def _to_openai_messages(msgs: list) -> list:
     return [{**m, "content": _to_openai_content(m.get("content"))}
             for m in msgs if isinstance(m, dict)]
+
+
+def _format_sources(annotations) -> str:
+    """联网搜索引用过的来源，OpenRouter 放在 message.annotations 里。
+    前端只渲染文本，所以在正文末尾附一小段来源列表，而不是丢掉。"""
+    if not isinstance(annotations, list):
+        return ""
+    seen, lines = set(), []
+    for a in annotations:
+        if not isinstance(a, dict) or a.get("type") != "url_citation":
+            continue
+        cite = a.get("url_citation") or {}
+        url = (cite.get("url") or "").strip()
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        title = (cite.get("title") or url).strip()
+        lines.append(f"{len(lines) + 1}. {title}\n   {url}")
+        if len(lines) >= 6:
+            break
+    return "\n\n———\n来源：\n" + "\n".join(lines) if lines else ""
 
 
 def _parse_jsonrpc(text: str):
@@ -213,11 +242,19 @@ async def chat(req: Request):
         "max_tokens": 4096,
         "messages": system_msgs + _to_openai_messages(msgs),
     }
+
+    # 挂上 web 插件只是把搜索这个工具交给模型，用不用它自己决定——
+    # 所以开着不等于每轮都花钱。
+    if body.get("use_web", WEB_SEARCH_DEFAULT):
+        payload["plugins"] = [{"id": "web"}]
+
     async with httpx.AsyncClient(timeout=120) as c:
         r = await c.post(BASE, headers={"Authorization": f"Bearer {KEY}"}, json=payload)
     if r.status_code != 200:
         raise HTTPException(r.status_code, r.text[:300])
     d = r.json()
-    return {"content": [{"type": "text", "text": d["choices"][0]["message"]["content"]}]}
+    message = d["choices"][0]["message"]
+    text = (message.get("content") or "") + _format_sources(message.get("annotations"))
+    return {"content": [{"type": "text", "text": text}]}
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
