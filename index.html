@@ -208,10 +208,11 @@ header::before{
 .empty{
   margin:16vh auto 0; text-align:center; color:var(--ink-soft); max-width:280px;
 }
+/* 空会话时的那只猫：跟图标同一套线稿，描边跟着主题走 */
 .empty .mark{
-  width:56px;height:56px;margin:0 auto 14px;border-radius:18px;
-  background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 45%,#fff),var(--accent));
-  box-shadow:0 8px 24px var(--glass-shadow);
+  display:block; width:98px; height:auto; margin:0 auto 18px;
+  fill:none; stroke:var(--ink-soft); stroke-width:3;
+  stroke-linecap:round; stroke-linejoin:round; opacity:.42;
 }
 .empty p{margin:0; font-size:14px}
 
@@ -572,7 +573,16 @@ function drawMessages(){
   list.innerHTML = '';
   if (!s.messages.length){
     list.insertAdjacentHTML('beforeend',
-      '<div class="empty"><div class="mark"></div><p>新的一页。说点什么都行。</p></div>');
+      '<div class="empty">' +
+      '<svg class="mark" viewBox="40 50 100 110" aria-hidden="true">' +
+        '<path d="M50 152V98a40 40 0 0 1 80 0v54M42 152h96"/>' +
+        '<path d="M79 121l1-10 7 6M101 121l-1-10-7 6"/>' +
+        '<path d="M79 121q-3 11 3 15h16q6-4 3-15"/>' +
+        '<path d="M82 136q-5 10 2 16h12q7-6 2-16"/>' +
+        '<path d="M98 152q10 1 10-8"/>' +
+        '<path d="M86 126v4.5M94 126v4.5" stroke-width="2.6"/>' +
+      '</svg>' +
+      '<p>新的一页。说点什么都行。</p></div>');
   }
   for (const m of s.messages){
     const row = document.createElement('div');
