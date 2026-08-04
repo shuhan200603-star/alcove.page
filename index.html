@@ -96,6 +96,22 @@
   --glass-shadow:rgba(88,60,76,.11);
   --swatch:linear-gradient(135deg,#eed4de,#c9b4dc);
 }
+/* 落花：底子是白的，颜色全在四角那点极淡的晕和花上。
+   白底上白玻璃会消失，所以这套的 --glass-line 是粉的——
+   气泡和输入条靠那道发丝线站住，不靠明度差。 */
+[data-theme="bloom"]{
+  --bg-1:#fffefe; --bg-2:#ffffff; --bg-3:#fffcfd;
+  --blob-a:#fbeaf0; --blob-b:#f4eefa; --blob-c:#fdf1f5;
+  --blob-op:.34; --blob-blur:110px;
+  --petal:#e7c0d0; --petal-op:.5;
+  --ink:#3a2f35; --ink-soft:#8b7883;
+  --accent:#8a6ba0; --accent-ink:#fff;
+  --glass:rgba(255,255,255,.78);
+  --glass-strong:rgba(255,255,255,.9);
+  --glass-line:rgba(224,196,211,.55);
+  --glass-shadow:rgba(150,108,130,.13);
+  --swatch:radial-gradient(circle at 50% 50%,#e7c0d0 0 34%,#fffdfe 36%);
+}
 [data-theme="night"]{
   --bg-1:#171526; --bg-2:#1d1b30; --bg-3:#121324;
   --blob-a:#3c3566; --blob-b:#2a3a5e; --blob-c:#4a3560;
@@ -128,6 +144,24 @@ body{
 @keyframes drift2{to{transform:translate3d(-16vw,-8vh,0) scale(.88)}}
 @keyframes drift3{to{transform:translate3d(10vw,-12vh,0) scale(1.1)}}
 @media (prefers-reduced-motion:reduce){#bg i{animation:none}}
+
+/* ---- 落花 ----
+   只有 --petal-op 非 0 的主题看得见（默认 0）。压在两侧和四角，
+   中间那条留给文字。飘动幅度很小——余光里动一下就够了，
+   动大了会跟正在读的字抢注意力。 */
+#petals{
+  position:fixed; inset:0; z-index:0; overflow:hidden; pointer-events:none;
+  color:var(--petal,#e7c0d0); opacity:var(--petal-op,0); transition:opacity .6s;
+}
+.pt{
+  position:absolute; fill:currentColor;
+  animation:sway 30s var(--ease) infinite alternate; will-change:transform;
+}
+@keyframes sway{
+  from{transform:translate3d(0,0,0) rotate(var(--r))}
+  to  {transform:translate3d(var(--dx),var(--dy),0) rotate(calc(var(--r) + 9deg))}
+}
+@media (prefers-reduced-motion:reduce){.pt{animation:none}}
 
 /* ---- 玻璃基类 ---- */
 .glass{
@@ -328,7 +362,7 @@ header::before{
 .sess button:active{opacity:1}
 
 .themes{padding-top:14px; border-top:.5px solid var(--glass-line)}
-.swatches{display:flex; gap:10px; padding:10px 8px 14px}
+.swatches{display:flex; gap:9px; padding:10px 8px 14px}
 
 /* 字体选择：每个按钮用它自己代表的字体来显示，所见即所得 */
 .fonts{display:flex; gap:7px; padding:2px 8px 0}
@@ -360,7 +394,7 @@ header::before{
 .ic[aria-pressed="true"]{border-color:var(--accent); transform:scale(1.06)}
 .tip{margin:12px 8px 0; font-size:11.5px; line-height:1.5; color:var(--ink-soft); opacity:.8}
 .sw{
-  width:38px;height:38px;border-radius:50%; cursor:pointer; padding:0;
+  width:36px;height:36px;border-radius:50%; cursor:pointer; padding:0;
   border:2px solid transparent; background-clip:padding-box;
   box-shadow:0 3px 10px var(--glass-shadow);
   transition:transform .2s var(--ease);
@@ -371,6 +405,7 @@ header::before{
 .sw[data-t="lime"]{background:linear-gradient(135deg,#c8e89b,#9fd98c)}
 .sw[data-t="milktea"]{background:linear-gradient(135deg,#e8d0ac,#cfa87c)}
 .sw[data-t="rose"]{background:linear-gradient(135deg,#eed4de,#c9b4dc)}
+.sw[data-t="bloom"]{background:radial-gradient(circle at 50% 50%,#e7c0d0 0 34%,#fffdfe 36%)}
 .sw[data-t="night"]{background:linear-gradient(135deg,#2b2a4a,#151c33)}
 
 /* ---- 设置面板 ---- */
@@ -445,6 +480,23 @@ label{display:block; font-size:13px; color:var(--ink-soft); margin:0 0 7px 4px}
 <body>
 
 <div id="bg"><i></i><i></i><i></i></div>
+<div id="petals" aria-hidden="true"></div>
+
+<svg width="0" height="0" aria-hidden="true"><defs>
+  <symbol id="fl" viewBox="0 0 64 64">
+    <g fill="currentColor">
+      <ellipse cx="32" cy="17" rx="9.5" ry="13.5"/>
+      <ellipse cx="32" cy="17" rx="9.5" ry="13.5" transform="rotate(72 32 32)"/>
+      <ellipse cx="32" cy="17" rx="9.5" ry="13.5" transform="rotate(144 32 32)"/>
+      <ellipse cx="32" cy="17" rx="9.5" ry="13.5" transform="rotate(216 32 32)"/>
+      <ellipse cx="32" cy="17" rx="9.5" ry="13.5" transform="rotate(288 32 32)"/>
+    </g>
+    <circle cx="32" cy="32" r="4.4" fill="currentColor" opacity=".5"/>
+  </symbol>
+  <symbol id="pt" viewBox="0 0 64 64">
+    <ellipse cx="32" cy="32" rx="9" ry="14" fill="currentColor" transform="rotate(-25 32 32)"/>
+  </symbol>
+</defs></svg>
 
 <div id="app">
   <header>
@@ -494,6 +546,7 @@ label{display:block; font-size:13px; color:var(--ink-soft); margin:0 0 7px 4px}
       <button class="sw" data-t="lime" aria-label="青柠"></button>
       <button class="sw" data-t="milktea" aria-label="奶茶"></button>
       <button class="sw" data-t="rose" aria-label="胭脂"></button>
+      <button class="sw" data-t="bloom" aria-label="落花"></button>
       <button class="sw" data-t="night" aria-label="深夜"></button>
     </div>
     <div class="sec" style="padding:0 8px 2px">字体</div>
@@ -599,6 +652,30 @@ function setFont(f){
   save(KEY.font, f);
   document.querySelectorAll('.fo').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.f === f)));
 }
+
+/* ---------- 落花 ----------
+   位置写死不随机：随机每次刷新都换一个样子，读起来像页面没稳住。
+   全部贴着两侧和四角，中间那条竖直的阅读区留空。
+   fl 是整朵花，pt 是单片花瓣——大的少、小的多，才不像贴纸。 */
+const PETALS = [
+  /* left%  top%  px  秒  延迟  起始角    dx      dy   形状 */
+  [   2,    6,   62, 34,   0,  -10, ' 16px', '-22px', 'fl'],
+  [  84,    9,   46, 29,  -7,   18, '-14px', '-26px', 'fl'],
+  [  -3,   26,   38, 26,  -3,   34, ' 12px', ' 18px', 'pt'],
+  [  90,   30,   28, 23, -11,  -22, '-16px', ' 20px', 'pt'],
+  [   6,   46,   24, 21,  -5,   62, ' 14px', ' 16px', 'pt'],
+  [  93,   50,   40, 32,  -2,   -8, '-10px', '-18px', 'fl'],
+  [  -2,   64,   50, 30, -13,   26, ' 18px', '-14px', 'fl'],
+  [  88,   70,   22, 19,  -8,  -44, '-12px', ' 22px', 'pt'],
+  [   9,   80,   30, 25,  -1,  -30, ' 10px', '-20px', 'pt'],
+  [  80,   87,   56, 36,  -9,   14, '-18px', '-16px', 'fl'],
+  [  -4,   92,   44, 28,  -4,   48, ' 16px', '-24px', 'fl'],
+  [  40,   -4,   26, 22,  -6,   10, '-14px', ' 18px', 'pt'],
+];
+$('#petals').innerHTML = PETALS.map(([x, y, size, dur, delay, rot, dx, dy, kind]) =>
+  `<svg class="pt" viewBox="0 0 64 64" style="left:${x}%;top:${y}%;width:${size}px;height:${size}px;` +
+  `--r:${rot}deg;--dx:${dx};--dy:${dy};animation-duration:${dur}s;animation-delay:${delay}s">` +
+  `<use href="#${kind}"/></svg>`).join('');
 
 /* ---------- 渲染 ---------- */
 function drawMessages(){
