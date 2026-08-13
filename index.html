@@ -28,12 +28,15 @@
   --ease: cubic-bezier(.32,.72,0,1);
   --safe-t: env(safe-area-inset-top, 0px);
   --safe-b: env(safe-area-inset-bottom, 0px);
-  /* 导航栏占掉的高度。打字时导航条滑下去，--nav-h 归零，
-     输入条和滚动区的留白跟着一起收——所以只需要改这一个数。 */
-  --nav-h: 66px;
-  --nav-total: calc(var(--nav-h) + var(--safe-b));
+  /* 导航条是一颗浮在内容上的胶囊：--nav-h 是它自己的高度，
+     --nav-gap 是它离屏幕底边的距离，--nav-total 是它整个占掉的位置。
+     输入条和各页的底部留白全从 --nav-total 算，所以打字时
+     只要把 --nav-h 和 --nav-gap 归零，其余的自己跟着收。 */
+  --nav-h: 62px;
+  --nav-gap: 12px;
+  --nav-total: calc(var(--nav-h) + var(--nav-gap) + var(--safe-b));
 }
-body.typing{--nav-h:0px}
+body.typing{--nav-h:0px; --nav-gap:0px}
 
 /* ---- 四套字体 ----
    楷体笔画本身就有粗细变化，字重压低才不会糊成一团；
@@ -197,26 +200,38 @@ body{
 .page .inner{max-width:760px; margin:0 auto}
 
 /* ---- 底部导航 ---- */
+/* 跟输入条一样是浮起来的：内容从它底下滑过去，backdrop-filter 才有东西可模糊。
+   贴在底边时它背后只有背景色，玻璃等于白做。 */
 #tabs{
-  position:absolute; left:0; right:0; bottom:0; z-index:16;
-  height:var(--nav-total); padding-bottom:var(--safe-b);
+  position:absolute; z-index:16;
+  left:16px; right:16px; bottom:calc(var(--safe-b) + var(--nav-gap));   /* 跟输入条左右对齐 */
+  height:var(--nav-h); border-radius:999px;
+  max-width:520px; margin:0 auto;
   display:grid; grid-template-columns:repeat(5,1fr);
-  background:var(--glass);
+  background:var(--glass-strong);
   -webkit-backdrop-filter:blur(30px) saturate(180%);
   backdrop-filter:blur(30px) saturate(180%);
-  border-top:.5px solid var(--glass-line);
-  box-shadow:0 -6px 24px var(--glass-shadow);
+  border:.5px solid var(--glass-line);
+  box-shadow:0 14px 38px var(--glass-shadow), 0 3px 10px var(--glass-shadow),
+             inset 0 1px 0 rgba(255,255,255,.6);
   transition:transform .34s var(--ease), opacity .24s;
 }
+/* 深夜的玻璃是一层很淡的白膜，底下压着正文时字会透上来跟标签打架。
+   垫一层背景色再上白膜，读起来才清楚。 */
+[data-theme="night"] #tabs{
+  background:color-mix(in srgb, var(--bg-2) 74%, transparent);
+  box-shadow:0 14px 38px var(--glass-shadow), 0 3px 10px var(--glass-shadow),
+             inset 0 1px 0 rgba(255,255,255,.1);
+}
 /* 打字时让开。--nav-h 已经归零，这里只负责把它挪出画面。 */
-body.typing #tabs{transform:translate3d(0,100%,0); opacity:0; pointer-events:none}
+body.typing #tabs{transform:translate3d(0,150%,0); opacity:0; pointer-events:none}
 .tab{
-  border:none; background:none; padding:0; cursor:pointer;
-  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
-  color:var(--ink-soft); font:inherit; font-size:10.5px; letter-spacing:.5px;
+  border:none; background:none; padding:0; cursor:pointer; border-radius:999px;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;
+  color:var(--ink-soft); font:inherit; font-size:10px; letter-spacing:.5px; line-height:1.3;
   opacity:.72; transition:color .2s, opacity .2s, transform .18s var(--ease);
 }
-.tab svg{width:23px;height:23px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.tab svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .tab:active{transform:scale(.9)}
 .tab[aria-selected="true"]{color:var(--accent); opacity:1}
 [data-theme="night"] .tab[aria-selected="true"]{color:var(--ink)}
@@ -227,14 +242,15 @@ header{
   padding:calc(var(--safe-t) + 10px) 12px 10px;
   display:grid; grid-template-columns:44px 1fr 44px; align-items:center; gap:8px;
 }
+/* 不要给这层加 mask-image：iOS 上 backdrop-filter 撞上遮罩会糊出一大片白，
+   顶栏底下就多一道白边。底部导航条只用 backdrop-filter 不用遮罩，所以它没事。
+   淡出的效果改成一道实边，正好跟底部那条呼应。 */
 header::before{
   content:''; position:absolute; inset:0; z-index:-1;
   background:var(--glass);
   -webkit-backdrop-filter:blur(24px) saturate(180%);
   backdrop-filter:blur(24px) saturate(180%);
   border-bottom:.5px solid var(--glass-line);
-  -webkit-mask-image:linear-gradient(#000 72%,transparent);
-  mask-image:linear-gradient(#000 72%,transparent);
 }
 .icon-btn{
   width:44px; height:44px; border-radius:50%; display:grid; place-items:center;
