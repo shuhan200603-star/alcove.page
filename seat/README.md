@@ -8,9 +8,7 @@
 先看这台机器在校外够不够得到学校系统，顺便把它的接口摸出来。**只读，不会预约任何东西。**
 
 ```bash
-sudo apt update && sudo apt install -y python3-pip git
-pip3 install requests
-
+sudo apt update && sudo apt install -y git python3-requests
 cd ~ && git clone -b claude/claude-flufut https://github.com/shuhan200603-star/alcove.page seat-tool
 cd seat-tool/seat && python3 probe.py
 ```
