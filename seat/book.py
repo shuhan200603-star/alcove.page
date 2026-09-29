@@ -21,6 +21,7 @@ import tomllib
 from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 import requests
@@ -55,17 +56,49 @@ LOG = setup_log()
 # ---------------------------------------------------------------- 时间
 
 
-def clock_offset(session: requests.Session, base: str) -> float:
-    """本机时钟比服务器快多少秒。VPS 的钟未必准，整点抢座差半秒就没了。"""
+def server_date(session: requests.Session, url: str) -> tuple[float, float, float] | None:
+    """打一发，返回（发出时刻, 收到时刻, 服务器 Date 的秒值）。"""
     try:
-        r = session.head(base, timeout=5)
-        server = parsedate_to_datetime(r.headers["Date"])
-        off = time.time() - server.timestamp()
-        LOG.info("时钟偏差 %+.2f 秒（本机比服务器快为正）", off)
+        t0 = time.time()
+        r = session.head(url, timeout=5)
+        if r.status_code >= 400:  # 有的服务器不认 HEAD
+            t0 = time.time()
+            r = session.get(url, timeout=5, stream=True)
+            r.close()
+        t1 = time.time()
+        return t0, t1, parsedate_to_datetime(r.headers["Date"]).timestamp()
+    except Exception:
+        return None
+
+
+def clock_offset(session: requests.Session, base: str, samples: int = 24) -> float:
+    """本机时钟比服务器快多少秒。VPS 的钟未必准，整点差半秒位子就没了。
+
+    Date 头只精确到秒，直接相减最多对到 ±0.5 秒。所以盯着它翻秒：
+    连打几发，逮住 Date 从 T 跳到 T+1 的那一刻，服务器跨过整秒的瞬间
+    就夹在前后两发之间，取中点，能收到几十毫秒。
+    """
+    prev: tuple[float, float, float] | None = None
+    for i in range(samples):
+        cur = server_date(session, f"{base}/?_={i}")  # 带个参数绕开缓存
+        if cur is None:
+            break
+        if prev and cur[2] > prev[2]:
+            # 服务器跨过 cur[2] 这个整秒的时刻，夹在 prev 发出 和 cur 收到 之间
+            off = (prev[0] + cur[1]) / 2 - cur[2]
+            span = (cur[1] - prev[0]) / 2
+            LOG.info("时钟偏差 %+.3f 秒（本机快为正，误差 ±%.3f）", off, span)
+            return off
+        prev = cur
+        time.sleep(0.05)
+
+    if prev:  # 没逮到翻秒，退回粗的
+        off = (prev[0] + prev[1]) / 2 - prev[2] - 0.5
+        LOG.warning("没逮到翻秒，粗估偏差 %+.2f 秒", off)
         return off
-    except Exception as e:
-        LOG.warning("拿不到服务器时间，按本机走：%s", e)
-        return 0.0
+
+    LOG.warning("拿不到服务器时间，按本机走")
+    return 0.0
 
 
 def next_open(open_at: str, now: datetime | None = None) -> datetime:
@@ -116,7 +149,8 @@ def notify(cfg: dict, title: str, body: str) -> None:
     n = cfg.get("notify", {})
     try:
         if url := n.get("bark_url"):
-            requests.get(f"{url.rstrip('/')}/{title}/{body}", timeout=8)
+            # 标题正文有中文和空格，得编码，不然发不出去
+            requests.get(f"{url.rstrip('/')}/{quote(title)}/{quote(body)}", timeout=8)
         if url := n.get("serverchan"):
             requests.post(url, data={"title": title, "desp": body}, timeout=8)
         if url := n.get("webhook"):
@@ -144,8 +178,21 @@ def run(cfg: dict, wait: bool, dry: bool) -> int:
         LOG.info("开放时刻 %s，%s 先登录", f"{target:%m-%d %H:%M:%S}", f"{login_at:%H:%M:%S}")
         sleep_until(login_at, offset)
 
+    seats = [s for s in book["seats"] if s.get("id")]
+    if not seats and not dry:
+        LOG.error("config 里一个座位 id 都没填")
+        notify(cfg, "没约成", "config 里一个座位 id 都没填")
+        return 2
+
     LOG.info("登录中")
-    login(session, cfg)
+    try:
+        login(session, cfg)
+    except Exception as e:
+        # 密码改了、账号锁了、接口变了都走这儿。一定要吭声，
+        # 不然你到了图书馆才发现没位子。
+        LOG.exception("登录失败")
+        notify(cfg, "没约成", f"登录就失败了：{type(e).__name__}: {e}")
+        return 4
     LOG.info("登录好了")
 
     if dry:
@@ -156,12 +203,8 @@ def run(cfg: dict, wait: bool, dry: bool) -> int:
         LOG.info("等整点")
         sleep_until(target, offset)
 
-    seats = [s for s in book["seats"] if s.get("id")]
-    if not seats:
-        LOG.error("config 里一个座位 id 都没填")
-        return 2
-
-    for attempt in range(1, int(retry.get("times", 8)) + 1):
+    times = int(retry.get("times", 8))
+    for attempt in range(1, times + 1):
         for seat in seats:
             label = seat.get("label") or seat["id"]
             try:
@@ -172,7 +215,8 @@ def run(cfg: dict, wait: bool, dry: bool) -> int:
             if ok:
                 notify(cfg, "约到了", f"{label}　{book['start']}-{book['end']}")
                 return 0
-        time.sleep(float(retry.get("interval", 0.4)))
+        if attempt < times:
+            time.sleep(float(retry.get("interval", 0.4)))
 
     LOG.error("都没抢到")
     notify(cfg, "没约到", "座位都被抢了，或者接口变了，看日志")
