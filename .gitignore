@@ -5,3 +5,4 @@ node_modules/
 seat/config.toml
 seat/log/
 __pycache__/
+seat/probe-report.txt

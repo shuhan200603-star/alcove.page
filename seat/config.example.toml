@@ -1,35 +1,33 @@
-# 复制成 config.toml 再填，config.toml 不进仓库
+# 复制成 config.toml 再填。config.toml 存明文密码，已在 .gitignore 里，不会进仓库
 [site]
-# 截图里 URL 被截断了，按实际填
 base = "http://order.lib.zzu.edu.cn"
+h5 = "http://order.lib.zzu.edu.cn/h5/index.html"
 
 [account]
+# 学号，密码同校园网
 username = ""
 password = ""
 
 [booking]
-# 开放时刻，北京时间。系统每天这个点放次日的位子
+# 每天这个点放次日的位子，北京时间
 open_at = "07:30:00"
 # 提前多久登录好
 login_ahead_sec = 60
-# 想约的时段，24 小时制
-start = "08:00"
-end = "22:00"
+# 系统只给这一个时段
+start = "07:30"
+end = "22:30"
 
-# 座位优先级，从上往下试，第一个成功就停
-# id 填抓包里那个座位的真实标识（dev_id / seat_id 之类）
+# 座位优先级，从上往下试，第一个成功就停。
+# id 要等探路脚本跑完才知道真实值长什么样，label 只是给日志看的
 seats = [
-  { id = "", label = "一楼靠窗 A12" },
-  { id = "", label = "一楼靠窗 A13" },
+  { id = "", label = "三楼中 006" },
 ]
 
 [retry]
-# 抢不到时的重试：次数和间隔（秒）
 times = 8
 interval = 0.4
 
 [notify]
-# 三选一或都不填。都不填就只写日志
 bark_url = ""      # 形如 https://api.day.app/你的key
-webhook = ""       # 任意接收 POST JSON 的地址
+webhook = ""
 serverchan = ""    # 形如 https://sctapi.ftqq.com/你的key.send

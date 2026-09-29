@@ -1,53 +1,62 @@
 # 图书馆自动约座
 
-郑大图书馆空间预约，每天北京时间 7:30 放次日的位子。这个脚本提前一分钟登录好，
-卡着 7:30:00.000 提交，抢不到就小量重试，结果推到手机。
+郑大图书馆空间预约（<http://order.lib.zzu.edu.cn/h5/index.html>），每天北京时间 7:30 放次日的位子。
+脚本提前一分钟登录好，卡着 7:30:00.000 提交三楼中 006，抢不到就换备选、小量重试，结果推到手机。
 
-## 还缺什么
+## 第一步：在 VPS 上探路
 
-`book.py` 里 `login()` 和 `submit()` 两个函数是空的 —— 学校系统的真实接口得抓包才知道。
-其余部分（时钟校准、定点、重试、通知、日志）都写好了。
-
-抓包步骤，电脑浏览器上做：
-
-1. 打开约座页面，F12 → Network，勾上 Preserve log
-2. 正常登录一次 → 在请求列表里找那条登录的 POST → 右键 → Copy → **Copy as cURL**
-3. 正常约一个位子 → 同样复制提交那条请求的 cURL
-4. 顺便在座位列表的请求里看一眼座位 id 长什么样（可能叫 dev_id / seat_id / room_id）
-
-把这两条 cURL 发我，密码和 Cookie 那几段用 `xxx` 涂掉，我只要字段名和结构。
-
-## 装在 VPS 上
+先看这台机器在校外够不够得到学校系统，顺便把它的接口摸出来。**只读，不会预约任何东西。**
 
 ```bash
-cd /opt && git clone https://github.com/shuhan200603-star/alcove.page seat-tool
-cd seat-tool/seat
+sudo apt update && sudo apt install -y python3-pip git
 pip3 install requests
-cp config.example.toml config.toml && vi config.toml   # 填账号和座位
+
+cd ~ && git clone -b claude/claude-flufut https://github.com/shuhan200603-star/alcove.page seat-tool
+cd seat-tool/seat && python3 probe.py
 ```
 
-先试跑，确认这台机器能连上学校的系统：
+把打印出来的东西发我，我照着填 `book.py` 里的 `login()` 和 `submit()`。
+
+## 第二步：填配置
 
 ```bash
-python3 book.py --now --dry-run
+cp config.example.toml config.toml
+vi config.toml     # 学号、密码、座位 id
 ```
 
-成了再挂定时。**VPS 时区多半是 UTC**，先看一眼 `date`：
+`config.toml` 存明文密码，已经在 `.gitignore` 里，不会进仓库。
+
+## 第三步：试一次
 
 ```bash
-timedatectl set-timezone Asia/Shanghai   # 一劳永逸，之后 cron 直接按北京时间写
+python3 book.py --now --dry-run   # 只登录，不提交
+python3 book.py --now             # 真的约一次，验证整条链路
+```
+
+## 第四步：挂上定时
+
+VPS 时区多半是 UTC，先一劳永逸改掉：
+
+```bash
+sudo timedatectl set-timezone Asia/Shanghai
+date          # 确认是北京时间
 crontab -e
 ```
 
 ```cron
-28 7 * * * cd /opt/seat-tool/seat && /usr/bin/python3 book.py >> log/cron.log 2>&1
+28 7 * * * cd ~/seat-tool/seat && /usr/bin/python3 book.py >> log/cron.log 2>&1
 ```
 
-7:28 起跑，脚本自己会登录、等到 7:30:00 再提交。
+7:28 起跑，脚本自己登录、等到 7:30:00 再提交。
 
-不想改系统时区的话，cron 写 `28 23 * * *`（UTC），效果一样 —— 脚本内部全程按北京时间算，
-还会拿服务器的 `Date` 头校准本机时钟偏差。
+不想改系统时区的话 cron 写 `28 23 * * *`（UTC）也一样——脚本内部全程按北京时间算，
+还会拿服务器的 `Date` 头校准本机时钟偏差，整点不会差半拍。
 
-## 注意
+## 文件
 
-`config.toml` 里有账号密码，已经在 `.gitignore` 里，别提交上去。
+| 文件 | 干什么的 |
+|---|---|
+| `probe.py` | 探路：测连通性、摸接口。只读 |
+| `book.py` | 正主：定点抢座 |
+| `config.example.toml` | 配置模板 |
+| `log/` | 每天一份日志，不进仓库 |
