@@ -4,3 +4,4 @@ node_modules/
 .DS_Store
 seat/config.toml
 seat/log/
+__pycache__/
