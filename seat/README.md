@@ -42,8 +42,10 @@ crontab -e
 ```
 
 ```cron
-28 7 * * * cd ~/seat-tool/seat && /usr/bin/python3 book.py >> log/cron.log 2>&1
+28 7 * * * cd ~/seat-tool/seat && mkdir -p log && /usr/bin/python3 book.py >> log/cron.log 2>&1
 ```
+
+（`mkdir -p log` 不能省——重定向是 shell 在 Python 启动前就做的，目录不在会直接报错。）
 
 7:28 起跑，脚本自己登录、等到 7:30:00 再提交。
 

@@ -68,10 +68,10 @@ def clock_offset(session: requests.Session, base: str) -> float:
         return 0.0
 
 
-def next_open(open_at: str) -> datetime:
-    """下一个开放时刻。已经过了就是明天这个点。"""
+def next_open(open_at: str, now: datetime | None = None) -> datetime:
+    """下一个开放时刻，北京时间。已经过了就是明天这个点。"""
     h, m, s = (int(x) for x in open_at.split(":"))
-    now = datetime.now(BJ)
+    now = (now or datetime.now(BJ)).astimezone(BJ)
     t = now.replace(hour=h, minute=m, second=s, microsecond=0)
     return t if t > now else t + timedelta(days=1)
 
