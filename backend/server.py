@@ -1,4 +1,4 @@
-import os, json, asyncio, hmac, sqlite3, time, httpx
+import os, re, json, asyncio, base64, hmac, sqlite3, time, httpx
 from contextlib import contextmanager
 from pathlib import Path
 from fastapi import FastAPI, Request, HTTPException
@@ -128,12 +128,15 @@ async def _telegram_process(update: dict, client: httpx.AsyncClient) -> bool:
         return True  # Discovery only: never auto-bind the first sender.
     if str(sender.get("id", "")) != TELEGRAM_OWNER_ID:
         return True
-    text = (message.get("text") or "").strip()
-    if not text:
-        return True  # Text first; photos and voice can be added after the bridge works.
+    text = (message.get("text") or message.get("caption") or "").strip()
+    file_id = _telegram_image_id(message)
+    if not text and not file_id:
+        return True  # 语音、贴纸之类暂时不处理
     chat_id = (message.get("chat") or {}).get("id")
     if not isinstance(chat_id, int):
         return True
+    # 数据库里只存文字；图片本身只在这一轮交给 Claude 看。
+    stored = ("[图片] " + text).strip() if file_id else text
 
     async with TELEGRAM_LOCK:
         with _telegram_db() as db:
@@ -142,10 +145,25 @@ async def _telegram_process(update: dict, client: httpx.AsyncClient) -> bool:
                              (update_id,)).fetchone()
         if row[1]:
             return True
-        _telegram_append("user", text, f"tg:{update_id}")
+        _telegram_append("user", stored, f"tg:{update_id}")
         reply = row[0]
         if reply is None:
-            reply = await _answer(_telegram_history(), True, WEB_SEARCH_DEFAULT)
+            history = _telegram_history()
+            if file_id:
+                image = await _telegram_download_image(client, file_id)
+                if image:
+                    blocks = [{"type": "image", "source": {"type": "base64",
+                               "media_type": image[0], "data": image[1]}},
+                              {"type": "text", "text": text or "（发来一张图片）"}]
+                    history[-1] = {"role": "user", "content": blocks}
+                else:
+                    history[-1] = {"role": "user",
+                                   "content": stored + "（图片没能下载下来，看不到内容）"}
+            typing = asyncio.create_task(_telegram_typing(client, chat_id))
+            try:
+                reply = await _answer(history, True, WEB_SEARCH_DEFAULT)
+            finally:
+                typing.cancel()
             with _telegram_db() as db:
                 db.execute("UPDATE tg_updates SET reply = ? WHERE update_id = ?",
                            (reply, update_id))
@@ -161,11 +179,174 @@ async def _telegram_process(update: dict, client: httpx.AsyncClient) -> bool:
     return True
 
 
-async def _telegram_send(client: httpx.AsyncClient, chat_id: int, message: str) -> bool:
-    for start in range(0, len(message), 4096):
-        result = await client.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-                                   json={"chat_id": chat_id,
-                                         "text": message[start:start + 4096]})
+def _telegram_image_id(message: dict) -> str | None:
+    """照片取最大的那张（Telegram 会给好几种尺寸）；以文件发的图片也认。"""
+    photos = message.get("photo") or []
+    if photos:
+        return photos[-1].get("file_id")
+    doc = message.get("document") or {}
+    if str(doc.get("mime_type", "")).startswith("image/") \
+            and (doc.get("file_size") or 0) <= TG_IMAGE_MAX:
+        return doc.get("file_id")
+    return None
+
+
+TG_IMAGE_MAX = 4_500_000          # 太大的图 Claude 也收不下
+_TG_IMAGE_TYPES = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+                   "webp": "image/webp", "gif": "image/gif"}
+
+
+async def _telegram_download_image(client: httpx.AsyncClient, file_id: str):
+    """返回 (media_type, base64)；任何失败都返回 None，不拖垮回复。"""
+    try:
+        r = await client.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getFile",
+                             params={"file_id": file_id})
+        info = r.json().get("result") or {}
+        path = info.get("file_path")
+        if not path or (info.get("file_size") or 0) > TG_IMAGE_MAX:
+            return None
+        r = await client.get(f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{path}")
+        r.raise_for_status()
+        if len(r.content) > TG_IMAGE_MAX:
+            return None
+        ext = path.rsplit(".", 1)[-1].lower()
+        return _TG_IMAGE_TYPES.get(ext, "image/jpeg"), base64.b64encode(r.content).decode()
+    except Exception:
+        return None
+
+
+async def _telegram_typing(client: httpx.AsyncClient, chat_id: int) -> None:
+    """回复没出来之前一直显示“正在输入…”（Telegram 每 5 秒会自动消失，所以要续）。"""
+    while True:
+        try:
+            await client.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendChatAction",
+                              json={"chat_id": chat_id, "action": "typing"})
+        except Exception:
+            pass
+        await asyncio.sleep(4.5)
+
+
+def _tg_escape(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _tg_inline(text: str) -> str:
+    """一行里的行内 Markdown → Telegram 支持的那几个 HTML 标签。"""
+    codes = []
+
+    def keep(m):
+        codes.append("<code>" + _tg_escape(m.group(1)) + "</code>")
+        return f"\x00{len(codes) - 1}\x00"
+
+    text = re.sub(r"`([^`\n]+)`", keep, text)
+    text = _tg_escape(text)
+    text = re.sub(r"\[([^\]\n]+)\]\((https?://[^\s)]+)\)",
+                  lambda m: f'<a href="{m.group(2).replace(chr(34), "%22")}">{m.group(1)}</a>', text)
+    text = re.sub(r"\*\*(?=\S)(.+?)(?<=\S)\*\*", r"<b>\1</b>", text)
+    text = re.sub(r"__(?=\S)(.+?)(?<=\S)__", r"<b>\1</b>", text)
+    text = re.sub(r"(?<![\*\w])\*(?=\S)([^*\n]+?)(?<=\S)\*(?![\*\w])", r"<i>\1</i>", text)
+    text = re.sub(r"~~(?=\S)(.+?)(?<=\S)~~", r"<s>\1</s>", text)
+    return re.sub(r"\x00(\d+)\x00", lambda m: codes[int(m.group(1))], text)
+
+
+def _tg_markdown(md: str) -> str:
+    """把 Claude 写的 Markdown 转成 Telegram 能显示的 HTML。
+    Telegram 不支持标题、列表、表格，就各自换个样子：标题加粗、列表用圆点、表格放进等宽块。"""
+    out, quote, table = [], [], []
+    lines = md.split("\n")
+    i = 0
+
+    def flush():
+        if quote:
+            out.append("<blockquote>" + "\n".join(quote) + "</blockquote>")
+            quote.clear()
+        if table:
+            out.append("<pre>" + _tg_escape("\n".join(table)) + "</pre>")
+            table.clear()
+
+    while i < len(lines):
+        line = lines[i]
+        fence = re.match(r"^\s*```\s*([\w+-]*)", line)
+        if fence:
+            flush()
+            lang, body = fence.group(1), []
+            i += 1
+            while i < len(lines) and not re.match(r"^\s*```", lines[i]):
+                body.append(lines[i])
+                i += 1
+            attr = f' class="language-{lang}"' if lang else ""
+            out.append(f"<pre><code{attr}>" + _tg_escape("\n".join(body)) + "</code></pre>")
+            i += 1
+            continue
+        if line.lstrip().startswith("|"):
+            if quote:
+                flush()
+            if not re.match(r"^\s*\|?\s*:?-{2,}", line):   # 表头下面那行 |---| 不要
+                table.append(line.strip())
+            i += 1
+            continue
+        if line.startswith(">"):
+            if table:
+                flush()
+            quote.append(_tg_inline(line[1:].lstrip()))
+            i += 1
+            continue
+        flush()
+        if m := re.match(r"^#{1,6}\s+(.*)", line):
+            out.append("<b>" + _tg_inline(re.sub(r"\*\*|__", "", m.group(1))) + "</b>")
+        elif re.match(r"^\s*([-*_])\s*\1\s*\1[\s\1]*$", line):
+            out.append("——————")
+        elif m := re.match(r"^(\s*)[-*+]\s+(.*)", line):
+            out.append(m.group(1) + "• " + _tg_inline(m.group(2)))
+        else:
+            out.append(_tg_inline(line))
+        i += 1
+    flush()
+    return "\n".join(out)
+
+
+def _tg_chunks(md: str, limit: int = 3500) -> list[str]:
+    """Telegram 一条最多 4096 字。按行切，切在代码块中间时先补上收尾、下一段再接着开。"""
+    chunks, cur, fence = [], [], None
+    size = 0
+    for line in md.split("\n"):
+        if size + len(line) + 1 > limit and cur:
+            if fence is not None:
+                cur.append("```")
+            chunks.append("\n".join(cur))
+            cur = [fence] if fence is not None else []
+            size = sum(len(x) + 1 for x in cur)
+        while len(line) > limit:                      # 极端情况：一行就超长
+            cur.append(line[:limit]); chunks.append("\n".join(cur))
+            cur, line = [], line[limit:]
+        cur.append(line)
+        size += len(line) + 1
+        m = re.match(r"^\s*```", line)
+        if m:
+            fence = None if fence is not None else line.strip()
+    if cur:
+        chunks.append("\n".join(cur))
+    return chunks
+
+
+async def _telegram_send(client: httpx.AsyncClient, chat_id: int, message: str,
+                         markdown: bool = True) -> bool:
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    if not markdown:
+        for start in range(0, len(message), 4096):
+            result = await client.post(url, json={"chat_id": chat_id,
+                                                  "text": message[start:start + 4096]})
+            result.raise_for_status()
+            if not result.json().get("ok"):
+                return False
+        return True
+    for chunk in _tg_chunks(message):
+        result = await client.post(url, json={"chat_id": chat_id, "text": _tg_markdown(chunk),
+                                              "parse_mode": "HTML",
+                                              "link_preview_options": {"is_disabled": True}})
+        if result.status_code == 400:
+            # 转换出来的格式 Telegram 不认，就退回纯文字，至少把话送到
+            result = await client.post(url, json={"chat_id": chat_id, "text": chunk[:4096]})
         result.raise_for_status()
         if not result.json().get("ok"):
             return False
@@ -649,9 +830,10 @@ async def chat(req: Request):
             # The database remains the source of truth if Telegram is offline.
             try:
                 async with httpx.AsyncClient(timeout=15) as client:
-                    if not await _telegram_send(client, int(TELEGRAM_OWNER_ID), "你（网页）：" + latest):
+                    if not await _telegram_send(client, int(TELEGRAM_OWNER_ID), "你（网页）：" + latest,
+                                                markdown=False):
                         raise RuntimeError("Telegram rejected the message")
-                    if not await _telegram_send(client, int(TELEGRAM_OWNER_ID), "Claude：" + answer):
+                    if not await _telegram_send(client, int(TELEGRAM_OWNER_ID), "**Claude：**\n" + answer):
                         raise RuntimeError("Telegram rejected the reply")
             except (httpx.HTTPError, RuntimeError):
                 TELEGRAM_STATUS.update(connected=False, error="SendMessageError")
