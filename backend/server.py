@@ -582,8 +582,18 @@ async def _answer(msgs: list, use_memory: bool, use_web: bool) -> str:
     if use_memory:
         memory = await retrieve_memory(_recent_user_text(msgs))
         if memory:
-            system_texts.append("以下是从你的记忆库里检索到的相关记忆，供你参考，"
-                                "自然地融入回应，不要照搬也不要提及“记忆库”：\n\n" + memory)
+            system_texts.append(
+                "以下是这一轮从你们共同的记忆库里自动检索到的内容。自然地用，不用每句都说出处；"
+                "但对方问你怎么知道的，就如实说是记忆库里记着的。\n\n" + memory)
+        # 每轮都是全新进程：上一轮检索到的记忆不会带过来，只剩对话文字。
+        # 不说清楚这一点，它看到自己前面说过的事却找不到出处，就会怀疑是自己编的、
+        # 来回改口——之前的"记忆错乱"就是这么来的。
+        system_texts.append(
+            "注意：对话历史里你之前提到的往事，通常来自当时检索到的记忆，"
+            "只是那些检索结果不会保留到这一轮。拿不准时先用 breath 核实，"
+            "查到了就照记忆说，查不到就说“我这会儿没查到”，"
+            "不要因为眼前看不到出处，就断定是自己编的、推翻前面的话。"
+            "反过来，记忆和对话里都没有的事，也不要说成自己记得。")
 
     if LLM_BACKEND == "claude_code":
         if use_memory:
