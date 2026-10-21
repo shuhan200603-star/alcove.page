@@ -867,8 +867,8 @@ label{display:block; font-size:13px; color:var(--ink-soft); margin:0 0 7px 4px}
           <label for="f-api">服务器地址</label>
           <input class="field" id="f-api" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="/api/chat">
           <label for="f-access">Alcove 访问口令</label>
-          <input class="field" id="f-access" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="只保存在这次浏览器会话">
-          <p class="hint">这是你给私人后端设置的口令，不是 Claude 密码。关闭浏览器后需重新输入。</p>
+          <input class="field" id="f-access" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="保存在这台设备上">
+          <p class="hint">这是你给私人后端设置的口令，不是 Claude 密码。存在这台设备上，填一次就行；想清掉就把框清空再保存。</p>
           <div class="sec">Telegram</div>
           <p class="hint" id="tg-detail">等待连接。</p>
           <label>记忆库</label>
@@ -955,10 +955,12 @@ const LANG_EXT = {
   sql:'sql', markdown:'md', xml:'xml', lua:'lua', perl:'pl', r:'r',
   php:'php', dart:'dart', scala:'scala',
 };
+const escHtml = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 mdRenderer.code = function({ text, lang }){
-  const esc = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  const ext = LANG_EXT[(lang||'').toLowerCase()] || lang || 'txt';
-  const label = lang || '';
+  const esc = escHtml(text);
+  const l = (lang || '').trim().split(/\s+/)[0];
+  const ext = LANG_EXT[l.toLowerCase()] || (/^[a-z0-9]{1,10}$/i.test(l) ? l : 'txt');
+  const label = escHtml(l);
   return '<div class="code-wrap">' +
     '<div class="code-bar"><span>' + label + '</span>' +
     '<div class="code-btns">' +
@@ -967,6 +969,8 @@ mdRenderer.code = function({ text, lang }){
     '</div></div>' +
     '<pre><code>' + esc + '</code></pre></div>';
 };
+/* 回复里夹带的原始 HTML 一律当文字显示，不让它变成真的标签 */
+mdRenderer.html = ({ text }) => escHtml(text);
 marked.setOptions({ renderer: mdRenderer, breaks: true, gfm: true });
 
 function renderMd(text){
@@ -976,6 +980,8 @@ function renderMd(text){
   html = html.replace(/<script[\s\S]*?<\/script>/gi, '');
   html = html.replace(/<iframe[\s\S]*?<\/iframe>/gi, '');
   html = html.replace(/\son\w+\s*=/gi, ' data-x=');
+  // 链接只放行普通地址，javascript: 之类的一律换成 #
+  html = html.replace(/href="\s*(?:javascript|vbscript|data):[^"]*"/gi, 'href="#"');
   return html;
 }
 
@@ -989,7 +995,16 @@ let currentId = load(KEY.current, null);
    若该路径不存在（比如页面被单独挂到别处），退回本地演示模式。 */
 const SAME_ORIGIN_API = '/api/chat';
 let conf = load(KEY.conf, { api:SAME_ORIGIN_API, memory:true, web:true });
-let accessToken = sessionStorage.getItem('alcove.access') || '';
+/* 口令存在这台设备的 localStorage 里，填一次就行。
+   旧版本存在 sessionStorage，读到了就顺手搬过来。 */
+let accessToken = (() => {
+  try {
+    const v = localStorage.getItem('alcove.access') || sessionStorage.getItem('alcove.access') || '';
+    if (v) localStorage.setItem('alcove.access', v);
+    sessionStorage.removeItem('alcove.access');
+    return v;
+  } catch { return ''; }
+})();
 const authHeaders = url => {
   try {
     if (accessToken && new URL(url, location.href).origin === location.origin)
@@ -1509,8 +1524,10 @@ document.querySelectorAll('.toggle').forEach(t => {
 
 $('#btn-save').onclick = () => {
   accessToken = $('#f-access').value.trim();
-  if (accessToken) sessionStorage.setItem('alcove.access', accessToken);
-  else sessionStorage.removeItem('alcove.access');
+  try {
+    if (accessToken) localStorage.setItem('alcove.access', accessToken);
+    else localStorage.removeItem('alcove.access');
+  } catch {}
   conf = {
     api: $('#f-api').value.trim(),
     memory: $('#f-memory').getAttribute('aria-checked') === 'true',
