@@ -14,6 +14,7 @@
 <link rel="stylesheet" href="fonts/lxgwwenkai-light.css">
 <link rel="icon" id="fav" href="icons/night.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" id="fav-apple" href="icons/night-180.png">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/15.0.7/marked.min.js" defer></script>
 
 <style>
 /* ============================================================
@@ -558,6 +559,66 @@ label{display:block; font-size:13px; color:var(--ink-soft); margin:0 0 7px 4px}
   opacity:0; pointer-events:none; transition:all .3s var(--ease);
 }
 .toast.show{opacity:1; transform:translate(-50%,0)}
+
+/* ---- Markdown 渲染 ---- */
+.bubble.md > :first-child{margin-top:0}
+.bubble.md > :last-child{margin-bottom:0}
+.bubble.md p{margin:.55em 0; line-height:1.72}
+.bubble.md h1,.bubble.md h2,.bubble.md h3,.bubble.md h4{
+  margin:1em 0 .4em; font-weight:var(--w-strong); letter-spacing:var(--track);
+}
+.bubble.md h1{font-size:1.25em} .bubble.md h2{font-size:1.13em}
+.bubble.md h3{font-size:1.05em} .bubble.md h4{font-size:1em}
+.bubble.md ul,.bubble.md ol{margin:.5em 0; padding-left:1.6em}
+.bubble.md li{margin:.25em 0; line-height:1.65}
+.bubble.md li::marker{color:var(--ink-soft)}
+.bubble.md blockquote{
+  margin:.6em 0; padding:2px 0 2px 14px;
+  border-left:3px solid var(--accent); color:var(--ink-soft);
+}
+.bubble.md hr{border:none; border-top:1px solid var(--glass-line); margin:1em 0}
+.bubble.md table{
+  width:100%; border-collapse:collapse; margin:.6em 0; font-size:.92em;
+}
+.bubble.md th,.bubble.md td{
+  padding:6px 10px; text-align:left;
+  border-bottom:.5px solid var(--glass-line);
+}
+.bubble.md th{font-weight:var(--w-strong); color:var(--ink-soft); font-size:.88em; letter-spacing:.3px}
+.bubble.md strong{font-weight:var(--w-strong)}
+.bubble.md a{color:var(--accent); text-decoration:underline; text-underline-offset:2px}
+
+/* 行内代码 */
+.bubble.md code{
+  font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Monaco,"Cascadia Code",Consolas,monospace;
+  font-size:.88em; padding:1.5px 5px; border-radius:6px;
+  background:var(--glass-strong); border:.5px solid var(--glass-line);
+}
+/* 代码块 */
+.code-wrap{
+  position:relative; margin:.6em 0; border-radius:var(--r-sm);
+  background:var(--glass-strong); border:.5px solid var(--glass-line);
+  overflow:hidden;
+}
+.code-wrap .code-bar{
+  display:flex; align-items:center; justify-content:space-between;
+  padding:5px 8px 4px 12px; font-size:11.5px; color:var(--ink-soft);
+  border-bottom:.5px solid var(--glass-line);
+}
+.code-wrap .code-bar span{opacity:.7; letter-spacing:.3px; text-transform:uppercase}
+.code-wrap .code-btns{display:flex; gap:2px}
+.code-wrap .code-btn{
+  padding:3px 8px; border-radius:6px; cursor:pointer; font-size:12px;
+  color:var(--ink-soft); background:transparent; border:none;
+  transition:background .15s, color .15s;
+}
+.code-wrap .code-btn:hover{background:var(--glass); color:var(--ink)}
+.code-wrap .code-btn:active{transform:scale(.95)}
+.code-wrap pre{margin:0; padding:12px 14px; overflow-x:auto; -webkit-overflow-scrolling:touch}
+.code-wrap pre code{
+  padding:0; border:none; background:none; font-size:.85em;
+  line-height:1.6; white-space:pre; tab-size:2;
+}
 </style>
 </head>
 <body>
@@ -758,6 +819,41 @@ label{display:block; font-size:13px; color:var(--ink-soft); margin:0 0 7px 4px}
 const $  = s => document.querySelector(s);
 const KEY = { sessions:'alcove.sessions', current:'alcove.current', theme:'alcove.theme', font:'alcove.font', icon:'alcove.icon', conf:'alcove.conf', tab:'alcove.tab' };
 
+/* ---------- Markdown 渲染 ---------- */
+/* marked 的自定义渲染器：把代码块包一层带工具栏的容器 */
+const mdRenderer = new marked.Renderer();
+const LANG_EXT = {
+  javascript:'js', typescript:'ts', python:'py', ruby:'rb', rust:'rs',
+  golang:'go', go:'go', shell:'sh', bash:'sh', zsh:'sh', csharp:'cs',
+  cpp:'cpp', c:'c', java:'java', kotlin:'kt', swift:'swift',
+  html:'html', css:'css', json:'json', yaml:'yml', toml:'toml',
+  sql:'sql', markdown:'md', xml:'xml', lua:'lua', perl:'pl', r:'r',
+  php:'php', dart:'dart', scala:'scala',
+};
+mdRenderer.code = function({ text, lang }){
+  const esc = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const ext = LANG_EXT[(lang||'').toLowerCase()] || lang || 'txt';
+  const label = lang || '';
+  return '<div class="code-wrap">' +
+    '<div class="code-bar"><span>' + label + '</span>' +
+    '<div class="code-btns">' +
+    '<button class="code-btn" data-act="copy" title="复制">复制</button>' +
+    '<button class="code-btn" data-act="dl" data-ext="' + ext + '" title="下载">下载</button>' +
+    '</div></div>' +
+    '<pre><code>' + esc + '</code></pre></div>';
+};
+marked.setOptions({ renderer: mdRenderer, breaks: true, gfm: true });
+
+function renderMd(text){
+  if (!text) return '';
+  // 用 marked 渲染，再做一次基本的 XSS 防护（去掉 script/iframe/on* 属性）
+  let html = marked.parse(text);
+  html = html.replace(/<script[\s\S]*?<\/script>/gi, '');
+  html = html.replace(/<iframe[\s\S]*?<\/iframe>/gi, '');
+  html = html.replace(/\son\w+\s*=/gi, ' data-x=');
+  return html;
+}
+
 const load = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
 
@@ -883,7 +979,14 @@ function drawMessages(){
     (m.images || []).forEach(src => {
       const img = new Image(); img.src = src; img.loading = 'lazy'; b.appendChild(img);
     });
-    if (m.text){ b.appendChild(document.createTextNode(m.text)); }
+    if (m.text){
+      if (m.role === 'assistant'){
+        b.classList.add('md');
+        b.insertAdjacentHTML('beforeend', renderMd(m.text));
+      } else {
+        b.appendChild(document.createTextNode(m.text));
+      }
+    }
     row.appendChild(b); list.appendChild(row);
   }
   // 别的 tab 上顶栏写的是那一页的名字，不能被会话标题顶掉
@@ -1082,6 +1185,31 @@ async function callApi(messages){
     .trim();
   return text || (typeof data.text === 'string' ? data.text : '(服务器返回了空回复)');
 }
+
+/* ---------- 代码块按钮（事件委托）---------- */
+$('#list').addEventListener('click', e => {
+  const btn = e.target.closest('.code-btn');
+  if (!btn) return;
+  const wrap = btn.closest('.code-wrap');
+  const code = wrap.querySelector('pre code').textContent;
+  const act = btn.dataset.act;
+
+  if (act === 'copy'){
+    navigator.clipboard.writeText(code).then(
+      () => { btn.textContent = '已复制'; setTimeout(() => btn.textContent = '复制', 1400); },
+      () => toast('复制失败')
+    );
+  } else if (act === 'dl'){
+    const ext = btn.dataset.ext || 'txt';
+    const blob = new Blob([code], { type:'text/plain;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'snippet.' + ext;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    btn.textContent = '已下载'; setTimeout(() => btn.textContent = '下载', 1400);
+  }
+});
 
 /* ---------- 绑定 ---------- */
 $('#btn-menu').onclick = openSidebar;
