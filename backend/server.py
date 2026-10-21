@@ -46,7 +46,7 @@ MEMORY_HEALTH_URL  = os.environ.get(
 )
 MEMORY_TOKEN       = os.environ.get("MEMORY_TOKEN", "").strip()
 # breath 每条记忆都过一遍 DeepSeek 脱水，实测 ~5.5s，所以超时给 8s；可用环境变量调。
-MEMORY_TIMEOUT     = float(os.environ.get("MEMORY_TIMEOUT", "8"))
+MEMORY_TIMEOUT     = float(os.environ.get("MEMORY_TIMEOUT", "15"))
 MEMORY_STATUS_TIMEOUT = float(os.environ.get("MEMORY_STATUS_TIMEOUT", "3"))
 MEMORY_MAX_RESULTS = int(os.environ.get("MEMORY_MAX_RESULTS", "3"))
 
@@ -299,7 +299,20 @@ def _record_plan_usage(info) -> None:
         }
 
 
-async def _claude_reply(msgs: list, system: str, use_web: bool) -> str:
+# 让 Claude 自己也能翻记忆库：检索、存新记忆、写日记、看状态。
+# 不放 trace——它能删记忆、改钉选，这种事留给你自己做。
+MEMORY_TOOLS = ["breath", "hold", "grow", "pulse"]
+
+
+def _memory_mcp_config() -> dict:
+    cfg = {"type": "http", "url": MEMORY_MCP_URL}
+    if MEMORY_TOKEN:
+        cfg["headers"] = {"Authorization": f"Bearer {MEMORY_TOKEN}"}
+    return cfg
+
+
+async def _claude_reply(msgs: list, system: str, use_web: bool,
+                        use_memory: bool = False) -> str:
     """Run the signed-in local Claude Code account through the official Agent SDK."""
     try:
         from claude_agent_sdk import (query, ClaudeAgentOptions, AssistantMessage,
@@ -313,14 +326,16 @@ async def _claude_reply(msgs: list, system: str, use_web: bool) -> str:
         yield {"type": "user", "message": {"role": "user", "content": blocks}}
 
     web_tools = ["WebSearch", "WebFetch"] if use_web else []
+    memory_tools = [f"mcp__memory__{name}" for name in MEMORY_TOOLS] if use_memory else []
     options = ClaudeAgentOptions(
         model=CLAUDE_MODEL,
         system_prompt=system,
         tools=web_tools,
-        allowed_tools=web_tools,
+        allowed_tools=web_tools + memory_tools,
+        mcp_servers={"memory": _memory_mcp_config()} if use_memory else {},
         setting_sources=[],
         permission_mode="dontAsk",
-        max_turns=3 if use_web else 1,
+        max_turns=8 if (use_web or use_memory) else 1,
     )
     last_text = ""
     final = None
@@ -339,6 +354,19 @@ async def _claude_reply(msgs: list, system: str, use_web: bool) -> str:
         raise HTTPException(502, "Claude Code 未能完成回复")
     CLAUDE_STATUS["last_success_at"] = int(time.time())
     return (final.result or last_text).strip()
+
+
+def _recent_user_text(msgs: list, n: int = 3) -> str:
+    """最近几条用户消息拼在一起，给记忆检索当关键词——只看最后一句太容易扑空。"""
+    texts = []
+    for m in reversed(msgs):
+        if len(texts) >= n:
+            break
+        if isinstance(m, dict) and m.get("role") == "user":
+            t = _latest_user_text([m])
+            if t:
+                texts.append(t)
+    return "\n".join(reversed(texts))
 
 
 def _latest_user_text(msgs: list) -> str:
@@ -436,7 +464,7 @@ async def retrieve_memory(query: str):
     query = (query or "").strip()
     if not query:
         return None
-    query = query[:1500]
+    query = query[-1500:]   # 太长时保留最新的部分
 
     async def _do():
         headers = {
@@ -552,13 +580,21 @@ async def _answer(msgs: list, use_memory: bool, use_web: bool) -> str:
 
     # 转发给 LLM 前，先用最新一条用户消息检索记忆，拼成额外的 system 段落。
     if use_memory:
-        memory = await retrieve_memory(_latest_user_text(msgs))
+        memory = await retrieve_memory(_recent_user_text(msgs))
         if memory:
             system_texts.append("以下是从你的记忆库里检索到的相关记忆，供你参考，"
                                 "自然地融入回应，不要照搬也不要提及“记忆库”：\n\n" + memory)
 
     if LLM_BACKEND == "claude_code":
-        return await _claude_reply(msgs, "\n\n".join(system_texts), use_web)
+        if use_memory:
+            system_texts.append(
+                "你可以用 memory 工具翻你们共同的记忆库：breath 检索（不带 query 就是随机浮现），"
+                "hold 存一条新记忆，grow 把一段经历写成日记，pulse 看记忆库状态。"
+                "上面没检索到、但这轮需要了解对方的时候（比如对方问你记不记得某事、问自己的情况），"
+                "先用 breath 查一下再回答，别说自己不知道。"
+                "对方明确让你记住什么，或者聊到值得长期记住的事，就用 hold 存下来。"
+                "用工具时不用汇报过程，自然地回应就好。")
+        return await _claude_reply(msgs, "\n\n".join(system_texts), use_web, use_memory)
 
     payload = {
         "model": MODEL,
