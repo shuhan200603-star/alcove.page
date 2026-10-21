@@ -8,8 +8,22 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Alcove">
-<meta name="theme-color" content="#e8e4f3">
-<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#fffefe">
+<script>
+/* 在首帧绘制前恢复主题，避免先闪出默认底色，iOS 顶部颜色也能尽早同步。 */
+try {
+  const chosen = JSON.parse(localStorage.getItem('alcove.theme') || '"lavender"');
+  const colors = {
+    lavender:'#f6eef7', lime:'#f4f8e9', milktea:'#f9f3ea',
+    rose:'#faf0f3', bloom:'#fffefe', sage:'#edf2ed', night:'#1d1b30'
+  };
+  if (Object.prototype.hasOwnProperty.call(colors, chosen)) {
+    document.documentElement.dataset.theme = chosen;
+    document.querySelector('meta[name="theme-color"]').content = colors[chosen];
+  }
+} catch {}
+</script>
+<link rel="manifest" href="manifest.webmanifest?v=2">
 <link rel="stylesheet" href="fonts/lxgwwenkai-regular.css">
 <link rel="stylesheet" href="fonts/lxgwwenkai-light.css">
 <link rel="icon" id="fav" href="icons/night.svg" type="image/svg+xml">
@@ -121,6 +135,18 @@ body.typing{--nav-h:0px; --nav-gap:0px}
   --glass-shadow:rgba(150,108,130,.13);
   --swatch:radial-gradient(circle at 50% 50%,#e7c0d0 0 34%,#fffdfe 36%);
 }
+[data-theme="sage"]{
+  --bg-1:#eaf0eb; --bg-2:#edf2ed; --bg-3:#e6eee8;
+  --blob-a:#c9d8cb; --blob-b:#d9e2d9; --blob-c:#c5d5c8;
+  --blob-op:.32; --blob-blur:100px;
+  --ink:#2c3830; --ink-soft:#627168;
+  --accent:#5b745f; --accent-ink:#fff;
+  --glass:rgba(255,255,255,.68);
+  --glass-strong:rgba(255,255,255,.88);
+  --glass-line:rgba(225,235,226,.96);
+  --glass-shadow:rgba(69,92,72,.11);
+  --swatch:linear-gradient(135deg,#afc7b2,#6f8a74);
+}
 [data-theme="night"]{
   --bg-1:#171526; --bg-2:#1d1b30; --bg-3:#121324;
   --blob-a:#3c3566; --blob-b:#2a3a5e; --blob-c:#4a3560;
@@ -135,6 +161,8 @@ body.typing{--nav-h:0px; --nav-gap:0px}
 
 *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
 html,body{height:100%; margin:0; overflow:hidden; overscroll-behavior:none}
+html{background:var(--bg-2); color-scheme:light}
+[data-theme="night"]{color-scheme:dark}
 /* 放 <symbol> 的那个空 svg 仍然是行内元素，留在文档流里会顶出一行的高度，
    把整个 #app 往下推。挪出流外。 */
 #defs{position:absolute; width:0; height:0}
@@ -208,7 +236,7 @@ body{
   left:16px; right:16px; bottom:calc(var(--safe-b) + var(--nav-gap));   /* 跟输入条左右对齐 */
   height:var(--nav-h); border-radius:999px;
   max-width:520px; margin:0 auto;
-  display:grid; grid-template-columns:repeat(5,1fr);
+  display:grid; grid-template-columns:repeat(6,1fr);
   background:var(--glass-strong);
   -webkit-backdrop-filter:blur(30px) saturate(180%);
   backdrop-filter:blur(30px) saturate(180%);
@@ -316,15 +344,29 @@ header::before{
 @keyframes blink{0%,60%,100%{opacity:.25;transform:translateY(0)}30%{opacity:.9;transform:translateY(-3px)}}
 
 .empty{
-  margin:16vh auto 0; text-align:center; color:var(--ink-soft); max-width:280px;
+  width:min(100%,540px); margin:clamp(20px,6vh,64px) auto 0;
+  padding:24px; border-radius:32px; color:var(--ink);
+  background:linear-gradient(145deg,var(--glass-strong),var(--glass));
+  border:1px solid var(--glass-line);
+  box-shadow:0 18px 48px var(--glass-shadow), inset 0 1px 0 var(--glass-line);
 }
-/* 空会话时的那只猫：跟图标同一套线稿，描边跟着主题走 */
+.empty-top{display:flex; align-items:center; justify-content:space-between; gap:12px}
 .empty .mark{
-  display:block; width:98px; height:auto; margin:0 auto 18px;
-  fill:none; stroke:var(--ink-soft); stroke-width:3;
-  stroke-linecap:round; stroke-linejoin:round; opacity:.42;
+  width:56px; height:56px; padding:8px; border-radius:18px;
+  fill:none; stroke:var(--accent); stroke-width:3;
+  stroke-linecap:round; stroke-linejoin:round;
+  background:color-mix(in srgb,var(--accent) 12%,var(--glass-strong));
 }
-.empty p{margin:0; font-size:14px}
+.eyebrow{font-size:11px; letter-spacing:.19em; color:var(--accent); font-weight:var(--w-med)}
+.empty h2,.feature-hero h2{margin:18px 0 8px; font-size:clamp(23px,6vw,30px); line-height:1.3; font-weight:var(--w-strong)}
+.empty p,.feature-hero p{margin:0; color:var(--ink-soft); font-size:14px; line-height:1.75}
+.prompt-list{display:flex; gap:9px; flex-wrap:wrap; margin-top:24px}
+.prompt-list button,.feature-link{
+  font:inherit; color:var(--ink); cursor:pointer; border:1px solid var(--glass-line);
+  background:var(--glass-strong); border-radius:18px; padding:11px 14px;
+  box-shadow:0 5px 16px var(--glass-shadow);
+}
+.prompt-list button:active,.feature-link:active{transform:scale(.97)}
 
 /* ---- 输入区 ---- */
 #composer{
@@ -426,7 +468,7 @@ body.typing #composer{padding-bottom:calc(var(--safe-b) + 12px)}
 }
 .sess button:active{opacity:1}
 
-.swatches{display:flex; gap:9px; padding:10px 8px 14px}
+.swatches{display:flex; flex-wrap:wrap; gap:9px; padding:10px 8px 14px}
 
 /* 字体选择：每个按钮用它自己代表的字体来显示，所见即所得 */
 .fonts{display:flex; gap:7px; padding:2px 8px 0}
@@ -470,6 +512,7 @@ body.typing #composer{padding-bottom:calc(var(--safe-b) + 12px)}
 .sw[data-t="milktea"]{background:linear-gradient(135deg,#e8d0ac,#cfa87c)}
 .sw[data-t="rose"]{background:linear-gradient(135deg,#eed4de,#c9b4dc)}
 .sw[data-t="bloom"]{background:radial-gradient(circle at 50% 50%,#e7c0d0 0 34%,#fffdfe 36%)}
+.sw[data-t="sage"]{background:linear-gradient(135deg,#afc7b2,#6f8a74)}
 .sw[data-t="night"]{background:linear-gradient(135deg,#2b2a4a,#151c33)}
 
 /* ---- 页面通用 ---- */
@@ -477,11 +520,11 @@ body.typing #composer{padding-bottom:calc(var(--safe-b) + 12px)}
    而且每块自己是浮层，液态玻璃才说得通。 */
 .card{
   border-radius:var(--r-lg); padding:18px 16px; margin-bottom:14px;
-  background:var(--glass);
+  background:linear-gradient(145deg,var(--glass-strong),var(--glass));
   -webkit-backdrop-filter:blur(30px) saturate(180%);
   backdrop-filter:blur(30px) saturate(180%);
   border:.5px solid var(--glass-line);
-  box-shadow:0 8px 28px var(--glass-shadow), inset 0 1px 0 rgba(255,255,255,.5);
+  box-shadow:0 12px 34px var(--glass-shadow), inset 0 1px 0 rgba(255,255,255,.5);
 }
 [data-theme="night"] .card{box-shadow:0 8px 28px var(--glass-shadow), inset 0 1px 0 rgba(255,255,255,.08)}
 .card > h2{margin:0 0 6px; font-size:18px; font-weight:var(--w-strong); letter-spacing:var(--track)}
@@ -496,14 +539,58 @@ body.typing #composer{padding-bottom:calc(var(--safe-b) + 12px)}
 .card .swatches,.card .fonts,.card .icons{padding-left:4px; padding-right:4px}
 .card .tip{margin:12px 4px 0}
 
-/* 还没做的页面 */
-.soon{margin:14vh auto 0; text-align:center; color:var(--ink-soft); max-width:270px}
-.soon .mark{
-  display:block; width:78px; height:auto; margin:0 auto 16px;
-  fill:none; stroke:var(--ink-soft); stroke-width:3;
-  stroke-linecap:round; stroke-linejoin:round; opacity:.34;
+/* Pro 用量：和站点其余卡片共用玻璃层，数字与进度单独留出空间。 */
+.usage-head{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px}
+.usage-head h2{margin:0; font-size:20px; font-weight:var(--w-strong)}
+.usage-refresh{
+  width:36px; height:36px; flex:none; border-radius:50%; cursor:pointer;
+  color:var(--ink); background:var(--glass-strong); border:.5px solid var(--glass-line);
+  font:inherit; font-size:23px; line-height:1;
 }
-.soon p{margin:0; font-size:14px; line-height:1.7}
+.usage-refresh:active{transform:rotate(30deg)}
+.usage-account{
+  border-radius:var(--r-md); padding:16px; background:var(--glass-strong);
+  border:.5px solid var(--glass-line);
+}
+.usage-name{font-size:15px; color:var(--ink); margin-bottom:14px}
+.usage-row{margin:0 0 17px}
+.usage-row-head{display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:8px; font-size:13px}
+.usage-row-head span:last-child{text-align:right; color:var(--ink-soft); font-size:12px}
+.usage-track{height:8px; border-radius:999px; overflow:hidden; background:color-mix(in srgb,var(--ink-soft) 14%,transparent)}
+.usage-fill{height:100%; border-radius:999px; background:var(--accent); transition:width .35s ease}
+.usage-stamp{font-size:12px; color:var(--ink-soft); margin:3px 0 0}
+.usage-explain{margin:12px 3px 0}
+
+/* 尚未开放的页面也保留清晰的内容层次 */
+.feature-hero{
+  position:relative; overflow:hidden; isolation:isolate;
+  min-height:350px; padding:28px; border-radius:32px;
+  background:linear-gradient(145deg,var(--glass-strong),var(--glass));
+  border:1px solid var(--glass-line);
+  box-shadow:0 18px 48px var(--glass-shadow), inset 0 1px 0 var(--glass-line);
+}
+.feature-hero::before{
+  content:''; position:absolute; z-index:-1; width:210px; height:210px;
+  top:-105px; right:-50px; border-radius:50%;
+  background:color-mix(in srgb,var(--accent) 15%,transparent); filter:blur(3px);
+}
+.feature-hero h2{max-width:13em; margin-top:20px}
+.feature-hero > p{max-width:30em}
+.feature-note{
+  display:flex; gap:16px; align-items:center; margin-top:28px; padding:18px;
+  border:1px solid var(--glass-line); border-radius:23px;
+  background:var(--glass-strong); box-shadow:0 8px 24px var(--glass-shadow);
+}
+.feature-note .mark{
+  flex:none; width:58px; height:58px; padding:8px; border-radius:18px;
+  fill:none; stroke:var(--accent); stroke-width:3;
+  stroke-linecap:round; stroke-linejoin:round;
+  background:color-mix(in srgb,var(--accent) 12%,var(--glass-strong));
+}
+.feature-note strong{display:block; font-size:15px; font-weight:var(--w-strong)}
+.feature-note span{display:block; color:var(--ink-soft); font-size:12px; line-height:1.55; margin-top:3px}
+.feature-link{display:inline-flex; gap:12px; align-items:center; margin-top:20px; color:var(--accent)}
+@media(max-width:380px){.feature-hero,.empty{padding:21px}.feature-note{gap:12px;padding:14px}}
 label{display:block; font-size:13px; color:var(--ink-soft); margin:0 0 7px 4px}
 .field{
   width:100%; padding:14px 16px; border-radius:var(--r-md); margin-bottom:16px;
@@ -688,27 +775,54 @@ label{display:block; font-size:13px; color:var(--ink-soft); margin:0 0 7px 4px}
 
     <section class="view" id="v-memory">
       <div class="page"><div class="inner">
-        <div class="soon">
-          <svg class="mark" viewBox="40 50 100 110" aria-hidden="true"><use href="#cat"/></svg>
-          <p>记忆库还没搬进来。<br>先把导航搭好，下一步接。</p>
+        <div class="feature-hero">
+          <div class="eyebrow">ALCOVE · MEMORIES</div>
+          <h2>值得记住的小事，<br>慢慢放在这里。</h2>
+          <p>记忆库页面正在准备中。现在可以先在聊天里继续说话。</p>
+          <div class="feature-note"><svg class="mark" viewBox="40 50 100 110" aria-hidden="true"><use href="#cat"/></svg><div><strong>记忆库页面尚未开放</strong><span>聊天顶部仍会显示当前连接状态。</span></div></div>
+          <button class="feature-link" type="button" data-go-chat>回到聊天 <span aria-hidden="true">↗</span></button>
         </div>
       </div></div>
     </section>
 
     <section class="view" id="v-journal">
       <div class="page"><div class="inner">
-        <div class="soon">
-          <svg class="mark" viewBox="40 50 100 110" aria-hidden="true"><use href="#cat"/></svg>
-          <p>便签日记还没做。</p>
+        <div class="feature-hero">
+          <div class="eyebrow">ALCOVE · JOURNAL</div>
+          <h2>把今天，<br>轻轻放在这里。</h2>
+          <p>便签日记正在准备中。现在想记下的事，也可以先告诉我。</p>
+          <div class="feature-note"><svg class="mark" viewBox="40 50 100 110" aria-hidden="true"><use href="#cat"/></svg><div><strong>还没有第一篇日记</strong><span>日记功能开放后，这里会成为你的记录空间。</span></div></div>
+          <button class="feature-link" type="button" data-go-chat>先去聊天 <span aria-hidden="true">↗</span></button>
         </div>
       </div></div>
     </section>
 
     <section class="view" id="v-study">
       <div class="page"><div class="inner">
-        <div class="soon">
-          <svg class="mark" viewBox="40 50 100 110" aria-hidden="true"><use href="#cat"/></svg>
-          <p>倒计时和打卡还没做。</p>
+        <div class="feature-hero">
+          <div class="eyebrow">ALCOVE · PROGRESS</div>
+          <h2>每一点进展，<br>都值得看见。</h2>
+          <p>倒计时和打卡功能正在准备中。今天的计划，可以先从一句话开始。</p>
+          <div class="feature-note"><svg class="mark" viewBox="40 50 100 110" aria-hidden="true"><use href="#cat"/></svg><div><strong>进度记录尚未开放</strong><span>开放后会在这里显示真实的计划与记录。</span></div></div>
+          <button class="feature-link" type="button" data-go-chat>去聊聊计划 <span aria-hidden="true">↗</span></button>
+        </div>
+      </div></div>
+    </section>
+
+    <section class="view" id="v-usage">
+      <div class="page"><div class="inner">
+        <div class="card">
+          <div class="usage-head">
+            <h2>Claude Pro 用量</h2>
+            <button class="usage-refresh" id="usage-refresh" aria-label="刷新已记录的用量" title="刷新已记录的用量">↻</button>
+          </div>
+          <p class="hint" id="usage-detail">等待连接。</p>
+          <div class="usage-account">
+            <div class="usage-name">我的 Claude Pro</div>
+            <div id="usage-limits"></div>
+            <p class="usage-stamp" id="usage-stamp">尚无用量数据</p>
+          </div>
+          <p class="hint usage-explain">这里显示 Claude Code 最近返回的订阅额度快照。刷新会读取服务器已有记录；额度数字通常在聊天后更新。</p>
         </div>
       </div></div>
     </section>
@@ -725,6 +839,7 @@ label{display:block; font-size:13px; color:var(--ink-soft); margin:0 0 7px 4px}
             <button class="sw" data-t="milktea" aria-label="奶茶"></button>
             <button class="sw" data-t="rose" aria-label="胭脂"></button>
             <button class="sw" data-t="bloom" aria-label="落花"></button>
+            <button class="sw" data-t="sage" aria-label="鼠尾草绿"></button>
             <button class="sw" data-t="night" aria-label="深夜"></button>
           </div>
           <div class="sec">字体</div>
@@ -751,6 +866,11 @@ label{display:block; font-size:13px; color:var(--ink-soft); margin:0 0 7px 4px}
           <p class="hint">默认连同源的 <code>/api/chat</code>，跟后端一起部署时不用改。密钥留在服务器上，前端碰不到。</p>
           <label for="f-api">服务器地址</label>
           <input class="field" id="f-api" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="/api/chat">
+          <label for="f-access">Alcove 访问口令</label>
+          <input class="field" id="f-access" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="只保存在这次浏览器会话">
+          <p class="hint">这是你给私人后端设置的口令，不是 Claude 密码。关闭浏览器后需重新输入。</p>
+          <div class="sec">Telegram</div>
+          <p class="hint" id="tg-detail">等待连接。</p>
           <label>记忆库</label>
           <button class="toggle" id="f-memory" role="switch" aria-checked="true">
             <span>让它记得我们聊过什么</span><i></i>
@@ -766,7 +886,7 @@ label{display:block; font-size:13px; color:var(--ink-soft); margin:0 0 7px 4px}
 
         <div class="card">
           <h2>会话</h2>
-          <p class="hint">全部对话都存在这台设备的浏览器里，从没上传过。清掉就找不回来了。</p>
+          <p class="hint">普通网页会话存在这台设备的浏览器里；Telegram 对话保存在你的服务器。清空只删除本机记录。</p>
           <button class="danger" id="btn-wipe">清空所有对话</button>
         </div>
 
@@ -791,6 +911,10 @@ label{display:block; font-size:13px; color:var(--ink-soft); margin:0 0 7px 4px}
     <button class="tab" data-v="study" role="tab" aria-selected="false">
       <svg viewBox="0 0 24 24"><rect x="4" y="5.5" width="16" height="15" rx="3"/><path d="M4 10h16M8.5 3v4M15.5 3v4M9 15l2 2 4-4"/></svg>
       进度
+    </button>
+    <button class="tab" data-v="usage" role="tab" aria-selected="false">
+      <svg viewBox="0 0 24 24"><path d="M4 18h16M6 14l4-4 3 2 5-6"/><path d="M18 6h-4M18 6v4"/></svg>
+      用量
     </button>
     <button class="tab" data-v="settings" role="tab" aria-selected="false">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -865,6 +989,14 @@ let currentId = load(KEY.current, null);
    若该路径不存在（比如页面被单独挂到别处），退回本地演示模式。 */
 const SAME_ORIGIN_API = '/api/chat';
 let conf = load(KEY.conf, { api:SAME_ORIGIN_API, memory:true, web:true });
+let accessToken = sessionStorage.getItem('alcove.access') || '';
+const authHeaders = url => {
+  try {
+    if (accessToken && new URL(url, location.href).origin === location.origin)
+      return { 'X-Alcove-Access': accessToken };
+  } catch {}
+  return {};
+};
 // 从旧版本升上来的配置可能缺这两项
 if (conf.memory === undefined) conf.memory = true;
 if (conf.web === undefined) conf.web = true;
@@ -886,7 +1018,10 @@ function newSession(render = true){
   if (render) { drawAll(); }
   return s;
 }
-function persist(){ save(KEY.sessions, sessions); save(KEY.current, currentId); }
+function persist(){
+  save(KEY.sessions, sessions.map(s => s.id === 'telegram' ? { ...s, messages:[] } : s));
+  save(KEY.current, currentId);
+}
 
 /* ---------- 标签页 ---------- */
 /* 顶栏跟着 tab 走：只有聊天页需要会话列表和那个会变的标题，
@@ -896,6 +1031,7 @@ const TABS = {
   memory:   { title:'记忆库', menu:false },
   journal:  { title:'便签日记', menu:false },
   study:    { title:'考研进度', menu:false },
+  usage:    { title:'用量',   menu:false },
   settings: { title:'设置',   menu:false },
 };
 let tab = 'chat';
@@ -912,6 +1048,7 @@ function setTab(v){
   $('#mem-status').style.display  = v === 'chat' ? '' : 'none';
   $('#chat-title').textContent    = meta.title || current().title || '新的对话';
   if (v === 'settings') fillSettings();
+  if (v === 'usage') drawUsage();
   closePanels();
 }
 
@@ -921,7 +1058,7 @@ function setTheme(t){
   save(KEY.theme, t);
   document.querySelectorAll('.sw').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.t === t)));
   const c = getComputedStyle(document.documentElement).getPropertyValue('--bg-2').trim();
-  document.querySelector('meta[name=theme-color]').content = c || '#e8e4f3';
+  document.querySelector('meta[name=theme-color]').content = c || '#fffefe';
 }
 /* 图标换的是 <link> 的 href。标签页图标会立刻跟着变；
    主屏幕上那个不会——iOS 在"添加到主屏幕"那一刻就把图存进系统了，
@@ -968,9 +1105,12 @@ function drawMessages(){
   list.innerHTML = '';
   if (!s.messages.length){
     list.insertAdjacentHTML('beforeend',
-      '<div class="empty">' +
-      '<svg class="mark" viewBox="40 50 100 110" aria-hidden="true"><use href="#cat"/></svg>' +
-      '<p>新的一页。说点什么都行。</p></div>');
+      `<div class="empty">
+        <div class="empty-top"><span class="eyebrow">ALCOVE · A NEW CONVERSATION</span><svg class="mark" viewBox="40 50 100 110" aria-hidden="true"><use href="#cat"/></svg></div>
+        <h2>今天想聊些什么？</h2>
+        <p>这里留了一点安静的位置给你。可以从一句小事开始。</p>
+        <div class="prompt-list"><button type="button" data-prompt="今天有件事想和你说。">说说今天</button><button type="button" data-prompt="陪我整理一下现在的心情。">整理心情</button></div>
+      </div>`);
   }
   for (const m of s.messages){
     const row = document.createElement('div');
@@ -1003,7 +1143,8 @@ function drawSessions(){
     el.innerHTML = '<span></span><button aria-label="删除">✕</button>';
     el.querySelector('span').textContent = s.title;
     el.onclick = () => { currentId = s.id; persist(); drawAll(); closePanels(); };
-    el.querySelector('button').onclick = e => { e.stopPropagation(); removeSession(s.id); };
+    if (s.id === 'telegram') el.querySelector('button').remove();
+    else el.querySelector('button').onclick = e => { e.stopPropagation(); removeSession(s.id); };
     box.appendChild(el);
   }
 }
@@ -1033,12 +1174,109 @@ async function drawStatus(){
   const url = statusUrl();
   if (!url){ paintStatus(false, '记忆库未知', '服务器地址不是标准的 /api/chat，探测不了。'); return; }
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, { headers:authHeaders(url) });
+    if (res.status === 401){ paintStatus(false, '需要访问口令', '在设置里填写 Alcove 访问口令并保存。'); return; }
     const data = await res.json();
     if (data && data.ok){ paintStatus(true, '记忆库已连接', '后端探活正常。'); }
     else { paintStatus(false, '记忆库连不上', '后端探活失败：' + ((data && (data.error || data.status_code)) || '未知原因')); }
   } catch {
     paintStatus(false, '记忆库未知', '探测请求本身失败了。');
+  }
+}
+async function drawUsage(){
+  const el = $('#usage-detail');
+  const box = $('#usage-limits');
+  const stamp = $('#usage-stamp');
+  const limits = [['five_hour','5 小时'],['seven_day','7 天'],
+                  ['seven_day_sonnet','Sonnet 7 天'],['seven_day_opus','Opus 7 天']];
+  const render = plan => {
+    box.replaceChildren();
+    for (const [key, label] of limits){
+      if (key.startsWith('seven_day_') && !plan[key]) continue;
+      const item = plan[key] || {};
+      const used = Number.isFinite(item.used_percentage)
+        ? Math.max(0, Math.min(100, item.used_percentage)) : null;
+      const row = document.createElement('div'); row.className = 'usage-row';
+      const head = document.createElement('div'); head.className = 'usage-row-head';
+      const left = document.createElement('span');
+      left.textContent = label + '已用 ' + (used === null ? '—' : used + '%');
+      const right = document.createElement('span');
+      if (item.resets_at){
+        const reset = new Date(item.resets_at * 1000);
+        const hours = Math.max(0, (reset.getTime() - Date.now()) / 3600000);
+        const remaining = reset.getTime() <= Date.now() ? '已到重置时间'
+          : hours < 48 ? '约 ' + Math.ceil(hours) + ' 小时后'
+          : '约 ' + Math.ceil(hours / 24) + ' 天后';
+        right.textContent = '重置 ' + reset.toLocaleString() + '（' + remaining + '）';
+      } else right.textContent = '等待重置时间';
+      head.append(left, right);
+      const track = document.createElement('div'); track.className = 'usage-track';
+      track.setAttribute('role', 'progressbar'); track.setAttribute('aria-label', label + '已用');
+      track.setAttribute('aria-valuemin', '0'); track.setAttribute('aria-valuemax', '100');
+      if (used !== null) track.setAttribute('aria-valuenow', String(used));
+      const fill = document.createElement('div'); fill.className = 'usage-fill';
+      fill.style.width = (used || 0) + '%'; track.appendChild(fill);
+      row.append(head, track); box.appendChild(row);
+    }
+    const updated = Object.values(plan).reduce((last, item) => Math.max(last, item.observed_at || 0), 0);
+    stamp.textContent = updated ? '最近更新 ' + new Date(updated * 1000).toLocaleString()
+      : '尚无用量数据';
+  };
+  render({});
+  const url = /\/chat$/.test(conf.api) ? conf.api.replace(/\/chat$/, '/usage') : '';
+  if (!url){ el.textContent = '使用标准 /api/chat 地址后可显示用量。'; return; }
+  try {
+    const res = await fetch(url, { headers:authHeaders(url) });
+    if (res.status === 401){ el.textContent = '请先填写 Alcove 访问口令。'; return; }
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (data.backend !== 'claude_code'){
+      el.textContent = '当前后端使用 API，尚未连接 Claude Pro。'; return;
+    }
+    const plan = data.plan || {};
+    render(plan);
+    el.textContent = data.last_success_at
+      ? '已连接 Claude Code。' + (Object.keys(plan).length ? '' : '等待用量事件。')
+      : '已配置 Claude Code；发送一条消息后验证连接。';
+  } catch {
+    el.textContent = '暂时读不到用量。';
+  }
+}
+async function syncTelegram(){
+  if (busy) return;
+  const detail = $('#tg-detail');
+  const url = /\/chat$/.test(conf.api) ? conf.api.replace(/\/chat$/, '/telegram/history') : '';
+  if (!url) return;
+  try {
+    const res = await fetch(url, { headers:authHeaders(url) });
+    if (res.status === 401){ detail.textContent = '请先填写 Alcove 访问口令。'; return; }
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (!data.enabled){ detail.textContent = '尚未在服务器配置 Telegram Bot。'; return; }
+    if (!data.owner_configured){
+      detail.textContent = data.candidate_id
+        ? '最近发消息的账号：' + (data.candidate_name ? '@' + data.candidate_name + '，' : '')
+          + 'ID ' + data.candidate_id + '。核对是你本人后，在服务器上设为 TELEGRAM_OWNER_ID。'
+        : '请先给自己的 Bot 发 /start，以便识别你的账号 ID。';
+      return;
+    }
+    detail.textContent = data.connected ? '已连接；会话列表里可打开 Telegram 对话。'
+      : '连接中' + (data.error ? '（' + data.error + '）' : '…');
+    let s = sessions.find(x => x.id === 'telegram');
+    if (!s){
+      s = { id:'telegram', title:'Telegram 对话', messages:[], at:Date.now() };
+      sessions.push(s);
+    }
+    const messages = (data.messages || []).map(m => ({ role:m.role, text:m.content, images:[] }));
+    if (JSON.stringify(s.messages) !== JSON.stringify(messages)){
+      s.messages = messages;
+      s.at = Date.now();
+      persist();
+      if (currentId === 'telegram') drawAll();
+      else drawSessions();
+    } else drawSessions();
+  } catch {
+    detail.textContent = '暂时连不上 Telegram 状态。';
   }
 }
 function drawThumbs(){
@@ -1120,6 +1358,9 @@ const DEMO = '演示模式：这份页面旁边没有后端。\n\n把服务器�
 async function send(){
   const text = $('#input').value.trim();
   if (busy || (!text && !pending.length)) return;
+  if (currentId === 'telegram' && pending.length){
+    toast('Telegram 同步对话暂时只支持文字'); return;
+  }
 
   const s = current();
   s.messages.push({ role:'user', text, images:pending.slice() });
@@ -1139,7 +1380,7 @@ async function send(){
 
   let reply;
   try {
-    reply = conf.api ? await callApi(s.messages) : await demo();
+    reply = conf.api ? await callApi(s.messages, s.id) : await demo();
   } catch (err) {
     reply = '没能连上服务器。\n\n' + (err && err.message ? err.message : String(err));
   }
@@ -1148,15 +1389,18 @@ async function send(){
   s.at = Date.now();
   busy = false;
   persist(); drawAll(); refreshSend();
+  drawUsage();
+  if (s.id === 'telegram') syncTelegram();
 }
 
 function demo(){ return new Promise(r => setTimeout(() => r(DEMO), 650)); }
 
-async function callApi(messages){
+async function callApi(messages, sessionId){
   const body = {
     messages: messages.map(m => ({ role:m.role, content:toApiContent(m) })),
     use_memory: conf.memory !== false,
     use_web: conf.web !== false,
+    channel: sessionId === 'telegram' ? 'telegram' : undefined,
   };
 
   // 默认地址是猜的，不是用户填的：它打不通只说明这份页面旁边没有后端，
@@ -1167,7 +1411,7 @@ async function callApi(messages){
   try {
     res = await fetch(conf.api, {
       method:'POST',
-      headers:{ 'Content-Type':'application/json' },
+      headers:{ 'Content-Type':'application/json', ...authHeaders(conf.api) },
       body: JSON.stringify(body)
     });
   } catch (err) {
@@ -1216,10 +1460,19 @@ $('#list').addEventListener('click', e => {
 $('#btn-menu').onclick = openSidebar;
 $('#scrim').onclick    = closePanels;
 $('#btn-new').onclick  = () => { newSession(); closePanels(); };
+$('#usage-refresh').onclick = drawUsage;
 $('#send').onclick     = send;
 $('#btn-pic').onclick  = () => $('#file').click();
 
 document.querySelectorAll('.tab').forEach(b => { b.onclick = () => setTab(b.dataset.v); });
+document.querySelectorAll('[data-go-chat]').forEach(b => { b.onclick = () => setTab('chat'); });
+$('#list').addEventListener('click', e => {
+  const button = e.target.closest('[data-prompt]');
+  if (!button) return;
+  $('#input').value = button.dataset.prompt;
+  $('#input').dispatchEvent(new Event('input'));
+  $('#input').focus();
+});
 
 $('#file').onchange = async e => {
   const files = [...e.target.files].slice(0, 6);
@@ -1255,6 +1508,9 @@ document.querySelectorAll('.toggle').forEach(t => {
 });
 
 $('#btn-save').onclick = () => {
+  accessToken = $('#f-access').value.trim();
+  if (accessToken) sessionStorage.setItem('alcove.access', accessToken);
+  else sessionStorage.removeItem('alcove.access');
   conf = {
     api: $('#f-api').value.trim(),
     memory: $('#f-memory').getAttribute('aria-checked') === 'true',
@@ -1262,6 +1518,8 @@ $('#btn-save').onclick = () => {
   };
   save(KEY.conf, conf);
   drawStatus();
+  drawUsage();
+  syncTelegram();
   toast(conf.api ? '已连接到你的服务器' : '已切回演示模式');
 };
 
@@ -1280,7 +1538,8 @@ $('#btn-wipe').onclick = function(){
   this.textContent = '清空所有对话';
   sessions = []; currentId = null;
   newSession(false); persist(); drawAll();
-  toast('对话已清空');
+  toast('本机对话已清空');
+  syncTelegram();
 };
 
 // 粘贴图片
@@ -1305,10 +1564,13 @@ setTheme(load(KEY.theme, 'lavender'));
 setFont(load(KEY.font, 'wenkai'));
 setIcon(load(KEY.icon, 'night'));
 if (!sessions.length) newSession(false);
-drawStatus(); drawAll(); refreshSend();
+$('#f-access').value = accessToken;
+drawStatus(); drawUsage(); syncTelegram(); drawAll(); refreshSend();
+setInterval(syncTelegram, 10000);
 setTab(load(KEY.tab, 'chat'));
 
 })();
 </script>
 </body>
 </html>
+

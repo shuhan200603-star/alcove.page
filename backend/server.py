@@ -1,10 +1,39 @@
-import os, json, asyncio, httpx
+import os, json, asyncio, hmac, sqlite3, time, httpx
+from contextlib import contextmanager
+from pathlib import Path
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.staticfiles import StaticFiles
 
-KEY   = os.environ["LLM_API_KEY"]
+LLM_BACKEND = os.environ.get("LLM_BACKEND", "openrouter").strip().lower()
+KEY   = os.environ.get("LLM_API_KEY", "")
 BASE  = os.environ.get("LLM_BASE", "https://openrouter.ai/api/v1/chat/completions")
 MODEL = os.environ.get("LLM_MODEL", "anthropic/claude-sonnet-4.5")
+CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "sonnet")
+ACCESS_TOKEN = os.environ.get("ALCOVE_ACCESS_TOKEN", "")
+
+if LLM_BACKEND not in ("openrouter", "claude_code"):
+    raise RuntimeError("LLM_BACKEND must be openrouter or claude_code")
+if LLM_BACKEND == "openrouter" and not KEY:
+    raise RuntimeError("LLM_API_KEY is required for OpenRouter")
+if LLM_BACKEND == "claude_code" and len(ACCESS_TOKEN) < 32:
+    raise RuntimeError("Set a random ALCOVE_ACCESS_TOKEN of at least 32 characters before using Claude Code")
+if LLM_BACKEND == "claude_code" and os.environ.get("ANTHROPIC_API_KEY"):
+    raise RuntimeError("Remove ANTHROPIC_API_KEY from this service so Claude Code uses the signed-in plan")
+
+# Claude Agent SDK emits plan rate-limit events while responding. These figures
+# are a snapshot, not an API-billing statement or a live poll of claude.ai.
+PLAN_USAGE: dict[str, dict] = {}
+CLAUDE_STATUS = {"last_success_at": None}
+
+# Optional private Telegram bridge. The owner ID is explicit so nobody can
+# claim the bot by messaging it first. Bot credentials stay on the VPS.
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_OWNER_ID = os.environ.get("TELEGRAM_OWNER_ID", "").strip()
+TELEGRAM_DB = Path(os.environ.get("ALCOVE_DATA_DB", "/opt/alcove/alcove.sqlite3"))
+if TELEGRAM_OWNER_ID and not TELEGRAM_OWNER_ID.isdigit():
+    raise RuntimeError("TELEGRAM_OWNER_ID must be numeric")
+if TELEGRAM_TOKEN and len(ACCESS_TOKEN) < 32:
+    raise RuntimeError("Set a random ALCOVE_ACCESS_TOKEN of at least 32 characters before enabling Telegram")
 
 # --- 记忆库（Ombre Brain）配置，全部从环境变量读，不硬编码 ---
 # 本机 Ombre Brain 是 streamable-http 的 MCP 服务，工具端点在 /mcp，
@@ -33,6 +62,283 @@ WEB_SEARCH_DEFAULT = os.environ.get("WEB_SEARCH", "1").strip().lower() \
     not in ("0", "false", "no", "off", "")
 
 app = FastAPI()
+TELEGRAM_LOCK = asyncio.Lock()
+TELEGRAM_STATUS = {"connected": False, "error": None,
+                   "candidate_id": None, "candidate_name": None}
+
+
+@contextmanager
+def _telegram_db():
+    TELEGRAM_DB.parent.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(TELEGRAM_DB, timeout=10)
+    TELEGRAM_DB.chmod(0o600)
+    db.execute("PRAGMA busy_timeout=10000")
+    db.execute("CREATE TABLE IF NOT EXISTS tg_messages ("
+               "id INTEGER PRIMARY KEY, role TEXT NOT NULL, text TEXT NOT NULL, "
+               "origin TEXT UNIQUE, created_at INTEGER NOT NULL)")
+    db.execute("CREATE TABLE IF NOT EXISTS tg_updates ("
+               "update_id INTEGER PRIMARY KEY, reply TEXT, delivered INTEGER NOT NULL DEFAULT 0)")
+    db.execute("CREATE TABLE IF NOT EXISTS tg_state ("
+               "key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    db.commit()
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def _telegram_history(limit: int = 30) -> list[dict]:
+    with _telegram_db() as db:
+        rows = db.execute("SELECT role, text FROM tg_messages ORDER BY id DESC LIMIT ?",
+                          (limit,)).fetchall()
+    return [{"role": role, "content": text} for role, text in reversed(rows)]
+
+
+def _telegram_append(role: str, message: str, origin: str | None = None) -> None:
+    with _telegram_db() as db:
+        db.execute("INSERT OR IGNORE INTO tg_messages(role, text, origin, created_at) "
+                   "VALUES (?, ?, ?, ?)", (role, message, origin, int(time.time())))
+
+
+def _telegram_offset() -> int:
+    with _telegram_db() as db:
+        row = db.execute("SELECT value FROM tg_state WHERE key = 'offset'").fetchone()
+    return int(row[0]) if row else 0
+
+
+def _telegram_set_offset(offset: int) -> None:
+    with _telegram_db() as db:
+        db.execute("INSERT OR REPLACE INTO tg_state(key, value) VALUES ('offset', ?)",
+                   (str(offset),))
+
+
+async def _telegram_process(update: dict, client: httpx.AsyncClient) -> bool:
+    update_id = update.get("update_id")
+    message = update.get("message") or {}
+    sender = message.get("from") or {}
+    if (message.get("chat") or {}).get("type") != "private":
+        return True
+    if not TELEGRAM_OWNER_ID:
+        TELEGRAM_STATUS["candidate_id"] = sender.get("id")
+        TELEGRAM_STATUS["candidate_name"] = sender.get("username")
+        return True  # Discovery only: never auto-bind the first sender.
+    if str(sender.get("id", "")) != TELEGRAM_OWNER_ID:
+        return True
+    text = (message.get("text") or "").strip()
+    if not text:
+        return True  # Text first; photos and voice can be added after the bridge works.
+    chat_id = (message.get("chat") or {}).get("id")
+    if not isinstance(chat_id, int):
+        return True
+
+    async with TELEGRAM_LOCK:
+        with _telegram_db() as db:
+            db.execute("INSERT OR IGNORE INTO tg_updates(update_id) VALUES (?)", (update_id,))
+            row = db.execute("SELECT reply, delivered FROM tg_updates WHERE update_id = ?",
+                             (update_id,)).fetchone()
+        if row[1]:
+            return True
+        _telegram_append("user", text, f"tg:{update_id}")
+        reply = row[0]
+        if reply is None:
+            reply = await _answer(_telegram_history(), True, WEB_SEARCH_DEFAULT)
+            with _telegram_db() as db:
+                db.execute("UPDATE tg_updates SET reply = ? WHERE update_id = ?",
+                           (reply, update_id))
+        _telegram_append("assistant", reply, f"tg-reply:{update_id}")
+
+        # Telegram sendMessage has no idempotency key: a network timeout after
+        # delivery may result in a duplicate on retry. Keep the same reply text.
+        if not await _telegram_send(client, chat_id, reply):
+            return False
+        with _telegram_db() as db:
+            db.execute("UPDATE tg_updates SET delivered = 1 WHERE update_id = ?",
+                       (update_id,))
+    return True
+
+
+async def _telegram_send(client: httpx.AsyncClient, chat_id: int, message: str) -> bool:
+    for start in range(0, len(message), 4096):
+        result = await client.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                                   json={"chat_id": chat_id,
+                                         "text": message[start:start + 4096]})
+        result.raise_for_status()
+        if not result.json().get("ok"):
+            return False
+    return True
+
+
+async def _telegram_poll() -> None:
+    # One uvicorn worker only. getUpdates cannot run while a webhook is set.
+    async with httpx.AsyncClient(timeout=40) as client:
+        while True:
+            try:
+                offset = _telegram_offset()
+                response = await client.get(
+                    f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates",
+                    params={"offset": offset, "timeout": 25, "allowed_updates": '["message"]'},
+                )
+                response.raise_for_status()
+                data = response.json()
+                if not data.get("ok"):
+                    raise RuntimeError("Telegram getUpdates failed")
+                TELEGRAM_STATUS.update(connected=True, error=None)
+                for update in data.get("result", []):
+                    if await _telegram_process(update, client):
+                        _telegram_set_offset(update["update_id"] + 1)
+                    else:
+                        break
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                TELEGRAM_STATUS.update(connected=False, error=type(exc).__name__)
+                await asyncio.sleep(10)
+
+
+@app.on_event("startup")
+async def _start_telegram():
+    if TELEGRAM_TOKEN:
+        with _telegram_db():
+            pass
+        app.state.telegram_task = asyncio.create_task(_telegram_poll())
+
+
+@app.on_event("shutdown")
+async def _stop_telegram():
+    task = getattr(app.state, "telegram_task", None)
+    if task:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+def _require_access(req: Request) -> None:
+    """Keep the private Claude subscription behind a server-side access key."""
+    if not ACCESS_TOKEN:
+        return
+    supplied = req.headers.get("x-alcove-access", "")
+    if not hmac.compare_digest(supplied, ACCESS_TOKEN):
+        raise HTTPException(401, "请在设置中填写 Alcove 访问口令")
+
+
+def _claude_prompt(msgs: list) -> tuple[str, list]:
+    """Keep recent text context and preserve images in the latest user turn."""
+    prior = []
+    for msg in msgs[:-1][-24:]:
+        if not isinstance(msg, dict) or msg.get("role") not in ("user", "assistant"):
+            continue
+        content = msg.get("content")
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            text = "\n".join(str(block.get("text", "")) for block in content
+                             if isinstance(block, dict) and block.get("type") == "text")
+            if any(isinstance(block, dict) and block.get("type") == "image" for block in content):
+                text += " [图片]"
+        else:
+            continue
+        prior.append(("用户" if msg["role"] == "user" else "助手") + "：" + text[:4000])
+    history = "\n".join(prior)
+
+    latest = msgs[-1].get("content", "")
+    blocks = [{"type": "text", "text": "以下是近期对话，请据此继续回应。\n" + history + "\n\n用户的新消息："}]
+    if isinstance(latest, str):
+        blocks.append({"type": "text", "text": latest})
+    elif isinstance(latest, list):
+        for block in latest:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "text":
+                blocks.append({"type": "text", "text": str(block.get("text", ""))})
+            elif block.get("type") == "image":
+                source = block.get("source") or {}
+                if source.get("type") == "base64" and source.get("data"):
+                    blocks.append({"type": "image", "source": {
+                        "type": "base64",
+                        "media_type": source.get("media_type", "image/jpeg"),
+                        "data": source["data"],
+                    }})
+    return history, blocks
+
+
+def _record_plan_usage(info) -> None:
+    """Prefer the CLI's per-window snapshot when available; leave gaps explicit."""
+    known = {"five_hour", "seven_day", "seven_day_sonnet", "seven_day_opus"}
+    reported = getattr(info, "raw", {})
+    raw = reported if isinstance(reported, dict) else {}
+    windows = raw.get("unifiedWindows") or raw.get("unified_windows") or {}
+    observed = int(time.time())
+    found = False
+    if isinstance(windows, dict):
+        for name, value in windows.items():
+            if name not in known or not isinstance(value, dict):
+                continue
+            fraction = value.get("utilization")
+            reset = value.get("resetsAt", value.get("resets_at"))
+            PLAN_USAGE[name] = {
+                "used_percentage": round(fraction * 100, 1)
+                if isinstance(fraction, (int, float)) else None,
+                "resets_at": reset,
+                "status": info.status,
+                "observed_at": observed,
+            }
+            found = True
+    if not found and info.rate_limit_type in known:
+        PLAN_USAGE[info.rate_limit_type] = {
+            "used_percentage": round(info.utilization * 100, 1)
+            if info.utilization is not None else None,
+            "resets_at": info.resets_at,
+            "status": info.status,
+            "observed_at": observed,
+        }
+
+
+async def _claude_reply(msgs: list, system: str, use_web: bool) -> str:
+    """Run the signed-in local Claude Code account through the official Agent SDK."""
+    try:
+        from claude_agent_sdk import (query, ClaudeAgentOptions, AssistantMessage,
+                                      ResultMessage, RateLimitEvent, TextBlock)
+    except ImportError as exc:
+        raise HTTPException(503, "服务器尚未安装 claude-agent-sdk") from exc
+
+    _, blocks = _claude_prompt(msgs)
+
+    async def prompt_stream():
+        yield {"type": "user", "message": {"role": "user", "content": blocks}}
+
+    web_tools = ["WebSearch", "WebFetch"] if use_web else []
+    options = ClaudeAgentOptions(
+        model=CLAUDE_MODEL,
+        system_prompt=system,
+        tools=web_tools,
+        allowed_tools=web_tools,
+        setting_sources=[],
+        permission_mode="dontAsk",
+        max_turns=3 if use_web else 1,
+    )
+    last_text = ""
+    final = None
+    try:
+        async for event in query(prompt=prompt_stream(), options=options):
+            if isinstance(event, RateLimitEvent):
+                _record_plan_usage(event.rate_limit_info)
+            elif isinstance(event, AssistantMessage):
+                last_text = "\n".join(block.text for block in event.content
+                                      if isinstance(block, TextBlock)) or last_text
+            elif isinstance(event, ResultMessage):
+                final = event
+    except Exception as exc:
+        raise HTTPException(502, "Claude Code 调用失败：" + type(exc).__name__) from exc
+    if final is None or final.is_error:
+        raise HTTPException(502, "Claude Code 未能完成回复")
+    CLAUDE_STATUS["last_success_at"] = int(time.time())
+    return (final.result or last_text).strip()
 
 
 def _latest_user_text(msgs: list) -> str:
@@ -214,38 +520,56 @@ async def memory_status() -> dict:
 
 
 @app.get("/api/memory/status")
-async def memory_status_endpoint():
+async def memory_status_endpoint(req: Request):
+    _require_access(req)
     return await memory_status()
 
 
-@app.post("/api/chat")
-async def chat(req: Request):
-    body = await req.json()
-    msgs = body.get("messages") or []
-    if not msgs:
-        raise HTTPException(400, "messages 是空的")
+@app.get("/api/usage")
+async def usage_endpoint(req: Request):
+    _require_access(req)
+    return {"backend": LLM_BACKEND, "plan": PLAN_USAGE,
+            "last_success_at": CLAUDE_STATUS["last_success_at"]}
 
-    system_msgs = [{"role": "system", "content": "你是克劳德。用中文，语气自然，不要客套。"}]
+
+@app.get("/api/telegram/history")
+async def telegram_history_endpoint(req: Request):
+    _require_access(req)
+    return {"enabled": bool(TELEGRAM_TOKEN), "connected": TELEGRAM_STATUS["connected"],
+            "owner_configured": bool(TELEGRAM_OWNER_ID),
+            "candidate_id": TELEGRAM_STATUS["candidate_id"],
+            "candidate_name": TELEGRAM_STATUS["candidate_name"],
+            "error": TELEGRAM_STATUS["error"],
+            "messages": _telegram_history(100) if TELEGRAM_TOKEN else []}
+
+
+async def _answer(msgs: list, use_memory: bool, use_web: bool) -> str:
+    if not isinstance(msgs, list) or not msgs or not isinstance(msgs[-1], dict) \
+            or msgs[-1].get("role") != "user":
+        raise HTTPException(400, "最后一条消息必须是用户消息")
+
+    system_texts = ["你是克劳德。用中文，语气自然，不要客套。"]
 
     # 转发给 LLM 前，先用最新一条用户消息检索记忆，拼成额外的 system 段落。
-    if body.get("use_memory", True):
+    if use_memory:
         memory = await retrieve_memory(_latest_user_text(msgs))
         if memory:
-            system_msgs.append({
-                "role": "system",
-                "content": "以下是从你的记忆库里检索到的相关记忆，供你参考，"
-                           "自然地融入回应，不要照搬也不要提及“记忆库”：\n\n" + memory,
-            })
+            system_texts.append("以下是从你的记忆库里检索到的相关记忆，供你参考，"
+                                "自然地融入回应，不要照搬也不要提及“记忆库”：\n\n" + memory)
+
+    if LLM_BACKEND == "claude_code":
+        return await _claude_reply(msgs, "\n\n".join(system_texts), use_web)
 
     payload = {
         "model": MODEL,
         "max_tokens": 4096,
-        "messages": system_msgs + _to_openai_messages(msgs),
+        "messages": [{"role": "system", "content": text} for text in system_texts]
+                    + _to_openai_messages(msgs),
     }
 
     # 挂上 web 插件只是把搜索这个工具交给模型，用不用它自己决定——
     # 所以开着不等于每轮都花钱。
-    if body.get("use_web", WEB_SEARCH_DEFAULT):
+    if use_web:
         payload["plugins"] = [{"id": "web"}]
 
     async with httpx.AsyncClient(timeout=120) as c:
@@ -254,7 +578,41 @@ async def chat(req: Request):
         raise HTTPException(r.status_code, r.text[:300])
     d = r.json()
     message = d["choices"][0]["message"]
-    text = (message.get("content") or "") + _format_sources(message.get("annotations"))
-    return {"content": [{"type": "text", "text": text}]}
+    return (message.get("content") or "") + _format_sources(message.get("annotations"))
+
+
+@app.post("/api/chat")
+async def chat(req: Request):
+    _require_access(req)
+    body = await req.json()
+    msgs = body.get("messages") or []
+    if body.get("channel") == "telegram":
+        if not TELEGRAM_TOKEN or not TELEGRAM_OWNER_ID:
+            raise HTTPException(503, "Telegram 尚未连接")
+        latest = _latest_user_text(msgs)
+        if not latest:
+            raise HTTPException(400, "Telegram 同步对话暂时只支持文字")
+        async with TELEGRAM_LOCK:
+            history = _telegram_history()
+            answer = await _answer(history + [{"role": "user", "content": latest}],
+                                   body.get("use_memory", True),
+                                   body.get("use_web", WEB_SEARCH_DEFAULT))
+            _telegram_append("user", latest)
+            _telegram_append("assistant", answer)
+            # Mirror the web turn into the owner's private Telegram chat.
+            # The database remains the source of truth if Telegram is offline.
+            try:
+                async with httpx.AsyncClient(timeout=15) as client:
+                    if not await _telegram_send(client, int(TELEGRAM_OWNER_ID), "你（网页）：" + latest):
+                        raise RuntimeError("Telegram rejected the message")
+                    if not await _telegram_send(client, int(TELEGRAM_OWNER_ID), "Claude：" + answer):
+                        raise RuntimeError("Telegram rejected the reply")
+            except (httpx.HTTPError, RuntimeError):
+                TELEGRAM_STATUS.update(connected=False, error="SendMessageError")
+    else:
+        answer = await _answer(msgs, body.get("use_memory", True),
+                               body.get("use_web", WEB_SEARCH_DEFAULT))
+    return {"content": [{"type": "text", "text": answer}]}
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
+

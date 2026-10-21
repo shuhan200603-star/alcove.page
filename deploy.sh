@@ -17,7 +17,7 @@ cd "$REPO"
 
 # --ff-only：本地要是有人动过文件就直接失败，而不是留下一堆冲突标记。
 # 失败了不要在这里改，去问在写代码的那一边。
-git pull --ff-only
+sudo -H -u "$(stat -c %U .git)" git pull --ff-only
 
 # backend/ 和这些说明文件不进静态目录——那个目录是公开的。
 rsync -a --delete \
