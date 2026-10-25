@@ -140,24 +140,68 @@ def _telegram_model() -> str:
     return row[0] if row else CLAUDE_MODEL
 
 
+def _telegram_set_model(choice: str) -> None:
+    with _telegram_db() as db:
+        db.execute("INSERT OR REPLACE INTO tg_state(key, value) VALUES ('model', ?)",
+                   (choice,))
+
+
+def _telegram_model_keyboard() -> dict:
+    current = _telegram_model()
+    return {"inline_keyboard": [[
+        {"text": f"{'✓ ' if current == name else ''}{name.title()}",
+         "callback_data": f"model:{name}"}
+        for name in ("sonnet", "opus", "haiku")
+    ]]}
+
+
+async def _telegram_show_model(client: httpx.AsyncClient, chat_id: int,
+                               message: str) -> bool:
+    response = await client.post(
+        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+        json={"chat_id": chat_id, "text": message,
+              "reply_markup": _telegram_model_keyboard()},
+    )
+    response.raise_for_status()
+    return bool(response.json().get("ok"))
+
+
+def _usage_reset_time(value) -> str:
+    if value is None or value == "":
+        return "未知"
+    try:
+        stamp = float(value)
+        if stamp > 10**12:  # Accept millisecond timestamps too.
+            stamp /= 1000
+        local = datetime.fromtimestamp(stamp, LOCAL_TIMEZONE)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return str(value)
+    return local.strftime("%Y-%m-%d %H:%M") + f"（{TIMEZONE_NAME}）"
+
+
 async def _telegram_command(text: str, client: httpx.AsyncClient, chat_id: int) -> bool | None:
     command, _, arg = text.partition(" ")
     command = command.split("@", 1)[0].lower()
     if command == "/model":
         choice = arg.strip().lower()
         if choice in ("sonnet", "opus", "haiku"):
-            with _telegram_db() as db:
-                db.execute("INSERT OR REPLACE INTO tg_state(key, value) VALUES ('model', ?)",
-                           (choice,))
+            _telegram_set_model(choice)
             message = f"TG 模型已设为 {choice}。网页普通会话仍使用服务器默认模型。"
         else:
-            message = f"当前 TG 模型：{_telegram_model()}。可用 /model sonnet、/model opus、/model haiku 切换。"
+            message = f"当前 TG 模型：{_telegram_model()}。点下面的按钮切换："
+        return await _telegram_show_model(client, chat_id, message)
     elif command == "/usage":
         if LLM_BACKEND != "claude_code":
             message = "当前不是 Claude Code 后端，无法读取订阅用量。"
         elif PLAN_USAGE:
-            lines = [f"{name}: {value.get('used_percentage')}%（重置：{value.get('resets_at') or '未知'}）"
-                     for name, value in sorted(PLAN_USAGE.items())]
+            names = {"five_hour": "5 小时", "seven_day": "7 天",
+                     "seven_day_sonnet": "7 天 Sonnet", "seven_day_opus": "7 天 Opus"}
+            lines = []
+            for name, value in sorted(PLAN_USAGE.items()):
+                used = value.get("used_percentage")
+                amount = f"{used}%" if used is not None else "未知"
+                lines.append(f"{names.get(name, name)}：{amount}"
+                             f"（重置：{_usage_reset_time(value.get('resets_at'))}）")
             message = "最近一次用量快照：\n" + "\n".join(lines)
         else:
             message = "还没有收到 Claude Code 的用量快照；先对话一轮再试。"
@@ -166,6 +210,69 @@ async def _telegram_command(text: str, client: httpx.AsyncClient, chat_id: int) 
     else:
         return None
     return await _telegram_send(client, chat_id, message, markdown=False)
+
+
+async def _telegram_callback(callback: dict, client: httpx.AsyncClient) -> bool:
+    callback_id = callback.get("id")
+    sender = callback.get("from") or {}
+    message = callback.get("message") or {}
+    chat = message.get("chat") or {}
+    chat_id, message_id = chat.get("id"), message.get("message_id")
+    data = callback.get("data", "")
+    owner = TELEGRAM_OWNER_ID and str(sender.get("id", "")) == TELEGRAM_OWNER_ID
+    allowed = data in ("model:sonnet", "model:opus", "model:haiku")
+    valid = owner and chat.get("type") == "private" and isinstance(chat_id, int) \
+        and str(chat_id) == TELEGRAM_OWNER_ID \
+        and isinstance(message_id, int) and allowed
+
+    if valid:
+        choice = data.removeprefix("model:")
+        _telegram_set_model(choice)
+
+    # Acknowledge even stale or unauthorized buttons so Telegram stops spinning.
+    if isinstance(callback_id, str):
+        try:
+            response = await client.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery",
+                json={"callback_query_id": callback_id,
+                      "text": "模型已切换" if valid else "此按钮不可用"},
+            )
+            response.raise_for_status()
+        except httpx.HTTPError:
+            pass  # Callback IDs expire; processing a retry must still succeed.
+    if not valid:
+        return True
+
+    text = f"当前 TG 模型：{choice}。点下面的按钮可再次切换。"
+    try:
+        response = await client.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText",
+            json={"chat_id": chat_id, "message_id": message_id, "text": text,
+                  "reply_markup": _telegram_model_keyboard()},
+        )
+        if response.status_code == 400 and "message is not modified" in response.text.lower():
+            return True
+        response.raise_for_status()
+        if response.json().get("ok"):
+            return True
+    except httpx.HTTPError:
+        pass
+    return await _telegram_show_model(client, chat_id, text)
+
+
+async def _telegram_register_commands(client: httpx.AsyncClient) -> None:
+    if not TELEGRAM_OWNER_ID:
+        return
+    response = await client.post(
+        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setMyCommands",
+        json={"scope": {"type": "chat", "chat_id": int(TELEGRAM_OWNER_ID)},
+              "commands": [
+                  {"command": "model", "description": "选择 Claude 模型"},
+                  {"command": "usage", "description": "查看最近用量"},
+                  {"command": "help", "description": "查看用法"},
+              ]},
+    )
+    response.raise_for_status()
 
 
 def _files_root() -> Path:
@@ -321,6 +428,9 @@ def _workspace_tools(produced: set[str]):
 
 
 async def _telegram_process(update: dict, client: httpx.AsyncClient) -> bool:
+    callback = update.get("callback_query")
+    if isinstance(callback, dict):
+        return await _telegram_callback(callback, client)
     update_id = update.get("update_id")
     message = update.get("message") or {}
     sender = message.get("from") or {}
@@ -616,12 +726,17 @@ async def _telegram_send(client: httpx.AsyncClient, chat_id: int, message: str,
 async def _telegram_poll() -> None:
     # One uvicorn worker only. getUpdates cannot run while a webhook is set.
     async with httpx.AsyncClient(timeout=40) as client:
+        try:
+            await _telegram_register_commands(client)
+        except httpx.HTTPError:
+            pass  # The command menu is optional; message polling must still start.
         while True:
             try:
                 offset = _telegram_offset()
                 response = await client.get(
                     f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates",
-                    params={"offset": offset, "timeout": 25, "allowed_updates": '["message"]'},
+                    params={"offset": offset, "timeout": 25,
+                            "allowed_updates": '["message","callback_query"]'},
                 )
                 response.raise_for_status()
                 data = response.json()

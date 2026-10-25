@@ -42,7 +42,7 @@ sudo /opt/alcove/frontend/deploy.sh
 
 现在 Claude 有私有的 `inbox/`、`outbox/` 文件工具。TG 文档和网页文档保存进 `inbox/`；Claude 可读文本、DOCX 和 PDF，修改后把 TXT、Markdown、CSV、JSON、DOCX、HTML、SVG 或代码文件写进 `outbox/`。TG 会收到真实附件；网页会显示下载按钮。单文件上限 10 MB，单轮网页最多 6 个文档。图片继续走原有视觉输入。PDF 文本提取需要在服务进程所用的 Python 环境安装 `pypdf`；扫描版 PDF 没有文字层时需要 OCR。
 
-所有文件默认保存在 `/opt/alcove/files`，与代码和公开静态目录分开。可以用 `ALCOVE_FILES_DIR` 修改位置，须保证运行 `alcove` 服务的用户可读写。现有部署脚本会创建默认目录。这里的文件**不会**随 `git pull` 或前端同步被清掉。对话中的“现在”由每轮真实时间注入，默认 `Asia/Shanghai`，可用 `ALCOVE_TIMEZONE` 改成 IANA 时区。TG 里还可用 `/usage` 看最近的订阅用量快照、`/model` 查看模型、`/model opus`、`/model sonnet` 或 `/model haiku` 切换 TG 模型；网页普通会话继续使用服务器默认模型。
+所有文件默认保存在 `/opt/alcove/files`，与代码和公开静态目录分开。可以用 `ALCOVE_FILES_DIR` 修改位置，须保证运行 `alcove` 服务的用户可读写。现有部署脚本会创建默认目录。这里的文件**不会**随 `git pull` 或前端同步被清掉。对话中的“现在”由每轮真实时间注入，默认 `Asia/Shanghai`，可用 `ALCOVE_TIMEZONE` 改成 IANA 时区。TG 里发送 `/model` 会显示可点选的 Sonnet、Opus、Haiku 按钮，也可以发送 `/model opus`、`/model sonnet` 或 `/model haiku` 切换；网页普通会话继续使用服务器默认模型。发送 `/usage` 可查看最近的订阅用量快照，重置时间按服务器配置的时区显示。
 
 部署前确认服务器原有的 `claude-agent-sdk` 可用，并在它的 Python 环境安装 `pypdf`，然后运行上面的 `deploy.sh`。部署脚本只同步仓库代码，不会改动服务器上的账号登录、Bot Token、访问口令或数据库。服务仍应只运行一个 Uvicorn worker，否则多个 worker 会同时轮询同一个 Telegram Bot。
 

@@ -1,5 +1,6 @@
 """End-to-end checks for private file transport without calling Claude or Telegram."""
 import importlib.util
+import json
 import os
 import tempfile
 import unittest
@@ -125,6 +126,72 @@ class FileBridgeTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(await self.server._telegram_process(update, client))
         self.assertEqual(self.server._telegram_model(), "opus")
         self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0].url.path.rsplit("/", 1)[-1], "sendMessage")
+        self.assertEqual(len(json.loads(sent[0].content)["reply_markup"]["inline_keyboard"][0]), 3)
+
+    async def test_model_picker_changes_only_owners_private_chat(self):
+        server = self.server
+        server._telegram_set_model("sonnet")
+        sent = []
+
+        def telegram(request):
+            sent.append((request.url.path.rsplit("/", 1)[-1], json.loads(request.content)))
+            return httpx.Response(200, json={"ok": True})
+
+        command = {"update_id": 90, "message": {"from": {"id": 123},
+                   "chat": {"id": 123, "type": "private"}, "text": "/model"}}
+        callback = {"update_id": 91, "callback_query": {"id": "tap-1", "from": {"id": 123},
+                    "data": "model:opus", "message": {"message_id": 7,
+                    "chat": {"id": 123, "type": "private"}}}}
+        stranger = {"update_id": 92, "callback_query": {"id": "tap-2", "from": {"id": 456},
+                    "data": "model:haiku", "message": {"message_id": 7,
+                    "chat": {"id": 123, "type": "private"}}}}
+
+        with patch.object(server, "_answer", side_effect=AssertionError("Claude called")):
+            async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as client:
+                self.assertTrue(await server._telegram_process(command, client))
+                self.assertTrue(await server._telegram_process(callback, client))
+                self.assertTrue(await server._telegram_process(stranger, client))
+
+        self.assertEqual(server._telegram_model(), "opus")
+        self.assertEqual([kind for kind, _ in sent],
+                         ["sendMessage", "answerCallbackQuery", "editMessageText",
+                          "answerCallbackQuery"])
+        keyboard = sent[0][1]["reply_markup"]["inline_keyboard"][0]
+        self.assertEqual([button["callback_data"] for button in keyboard],
+                         ["model:sonnet", "model:opus", "model:haiku"])
+        self.assertIn("✓ Opus", sent[2][1]["reply_markup"]["inline_keyboard"][0][1]["text"])
+
+    async def test_usage_reset_is_readable_local_time(self):
+        sent = []
+
+        def telegram(request):
+            sent.append(json.loads(request.content))
+            return httpx.Response(200, json={"ok": True})
+
+        update = {"update_id": 93, "message": {"from": {"id": 123},
+                  "chat": {"id": 123, "type": "private"}, "text": "/usage"}}
+        with patch.dict(self.server.PLAN_USAGE, {
+            "five_hour": {"used_percentage": 5.0, "resets_at": 1792920000}
+        }, clear=True):
+            async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as client:
+                self.assertTrue(await self.server._telegram_process(update, client))
+        self.assertIn("2026-10-25 17:20（Asia/Shanghai）", sent[0]["text"])
+        self.assertNotIn("1792920000", sent[0]["text"])
+
+    async def test_command_menu_is_scoped_to_owner_chat(self):
+        sent = []
+
+        def telegram(request):
+            sent.append((request.url.path.rsplit("/", 1)[-1], json.loads(request.content)))
+            return httpx.Response(200, json={"ok": True})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as client:
+            await self.server._telegram_register_commands(client)
+        self.assertEqual(sent[0][0], "setMyCommands")
+        self.assertEqual(sent[0][1]["scope"], {"type": "chat", "chat_id": 123})
+        self.assertEqual([item["command"] for item in sent[0][1]["commands"]],
+                         ["model", "usage", "help"])
 
 
 if __name__ == "__main__":
