@@ -384,6 +384,9 @@ body.typing #composer{padding-bottom:calc(var(--safe-b) + 12px)}
 #thumbs{display:flex; gap:8px; padding:0 4px 8px; flex-wrap:wrap}
 .thumb{position:relative; width:62px;height:62px;border-radius:var(--r-sm); overflow:hidden; box-shadow:0 4px 14px var(--glass-shadow)}
 .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.thumb.file-thumb{width:auto;max-width:180px;display:flex;align-items:center;padding:8px 25px 8px 10px;font-size:12px;background:var(--glass);color:var(--ink);overflow:hidden}
+.thumb.file-thumb span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bubble .file-link{display:block;margin-top:8px;color:var(--accent);font:inherit;text-decoration:underline;cursor:pointer;background:none;border:0;padding:0;text-align:left}
 .thumb button{
   position:absolute; top:3px; right:3px; width:19px;height:19px;border-radius:50%;
   border:none; background:rgba(0,0,0,.55); color:#fff; font-size:12px; line-height:19px; padding:0; cursor:pointer;
@@ -764,14 +767,14 @@ label{display:block; font-size:13px; color:var(--ink-soft); margin:0 0 7px 4px}
         <div id="thumbs"></div>
         <div class="bar">
           <textarea id="input" rows="1" placeholder="说点什么…"></textarea>
-          <button class="round" id="btn-pic" aria-label="添加图片">
+          <button class="round" id="btn-pic" aria-label="添加图片或文件">
             <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
           </button>
           <button class="round" id="send" aria-label="发送" disabled>
             <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
           </button>
         </div>
-        <input type="file" id="file" accept="image/*" multiple hidden>
+        <input type="file" id="file" accept="image/*,.txt,.md,.csv,.json,.html,.xml,.svg,.py,.js,.css,.yaml,.yml,.docx,.pdf" multiple hidden>
       </div>
     </section>
 
@@ -1018,6 +1021,7 @@ const authHeaders = url => {
 if (conf.memory === undefined) conf.memory = true;
 if (conf.web === undefined) conf.web = true;
 let pending = [];          // 待发送的图片
+let pendingFiles = [];     // 待上传的文档，发送后保存在服务器工作区
 let busy = false;
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -1136,6 +1140,14 @@ function drawMessages(){
     b.className = 'bubble';
     (m.images || []).forEach(src => {
       const img = new Image(); img.src = src; img.loading = 'lazy'; b.appendChild(img);
+    });
+    (m.files || []).forEach(file => {
+      const link = document.createElement('button');
+      link.className = 'file-link';
+      link.textContent = '📎 ' + file.name;
+      if (file.path && file.path.startsWith('outbox/')) link.dataset.filePath = file.path;
+      else link.disabled = true;
+      b.appendChild(link);
     });
     if (m.text){
       if (m.role === 'assistant'){
@@ -1307,10 +1319,19 @@ function drawThumbs(){
     d.querySelector('button').onclick = () => { pending.splice(i, 1); drawThumbs(); };
     box.appendChild(d);
   });
+  pendingFiles.forEach((file, i) => {
+    const d = document.createElement('div');
+    d.className = 'thumb file-thumb';
+    const label = document.createElement('span'); label.textContent = '📎 ' + file.name;
+    const button = document.createElement('button'); button.textContent = '✕';
+    button.setAttribute('aria-label', '移除');
+    button.onclick = () => { pendingFiles.splice(i, 1); drawThumbs(); };
+    d.append(label, button); box.appendChild(d);
+  });
   refreshSend();
 }
 function refreshSend(){
-  $('#send').disabled = busy || (!$('#input').value.trim() && !pending.length);
+  $('#send').disabled = busy || (!$('#input').value.trim() && !pending.length && !pendingFiles.length);
 }
 let toastTimer;
 function toast(msg){
@@ -1358,6 +1379,21 @@ function readImage(file){
 }
 
 /* ---------- 发送 ---------- */
+function fileApiUrl(path){
+  if (!/\/chat$/.test(conf.api)) throw new Error('文件功能需要标准的 /api/chat 地址');
+  return conf.api.replace(/\/chat$/, '/files') + (path ? '/' + path.split('/').map(encodeURIComponent).join('/') : '');
+}
+async function uploadFiles(files){
+  const uploaded = [];
+  for (const file of files){
+    if (file.size > 10 * 1024 * 1024) throw new Error(file.name + ' 超过 10 MB');
+    const url = fileApiUrl();
+    const res = await fetch(url, { method:'POST', headers:{ ...authHeaders(url), 'X-File-Name':encodeURIComponent(file.name) }, body:file });
+    if (!res.ok) throw new Error('上传 ' + file.name + ' 失败：HTTP ' + res.status);
+    uploaded.push(await res.json());
+  }
+  return uploaded;
+}
 function toApiContent(m){
   const blocks = [];
   for (const src of (m.images || [])){
@@ -1374,35 +1410,38 @@ const DEMO = '演示模式：这份页面旁边没有后端。\n\n把服务器�
 
 async function send(){
   const text = $('#input').value.trim();
-  if (busy || (!text && !pending.length)) return;
-  if (currentId === 'telegram' && pending.length){
-    toast('Telegram 同步对话暂时只支持文字'); return;
+  if (busy || (!text && !pending.length && !pendingFiles.length)) return;
+  if (currentId === 'telegram' && (pending.length || pendingFiles.length)){
+    toast('请直接在 Telegram 里发送文件'); return;
   }
 
+  busy = true; refreshSend();
+  let uploaded = [];
+  try { uploaded = await uploadFiles(pendingFiles); }
+  catch (err){ busy = false; refreshSend(); toast(err.message || String(err)); return; }
   const s = current();
-  s.messages.push({ role:'user', text, images:pending.slice() });
+  s.messages.push({ role:'user', text, images:pending.slice(), files:uploaded });
   if (s.title === '新的对话'){
-    s.title = (text || '图片').slice(0, 18) || '图片';
+    s.title = (text || uploaded[0]?.name || '图片').slice(0, 18) || '图片';
   }
   s.at = Date.now();
-  pending = [];
+  pending = []; pendingFiles = [];
   $('#input').value = ''; $('#input').style.height = 'auto';
   drawThumbs(); persist(); drawAll();
 
-  busy = true; refreshSend();
   const row = document.createElement('div');
   row.className = 'row ai';
   row.innerHTML = '<div class="bubble"><div class="dots"><span></span><span></span><span></span></div></div>';
   $('#list').appendChild(row); scrollDown();
 
-  let reply;
+  let response;
   try {
-    reply = conf.api ? await callApi(s.messages, s.id) : await demo();
+    response = conf.api ? await callApi(s.messages, s.id) : {text:await demo(),files:[]};
   } catch (err) {
-    reply = '没能连上服务器。\n\n' + (err && err.message ? err.message : String(err));
+    response = {text:'没能连上服务器。\n\n' + (err && err.message ? err.message : String(err)),files:[]};
   }
   row.remove();
-  s.messages.push({ role:'assistant', text:reply });
+  s.messages.push({ role:'assistant', text:response.text, files:response.files });
   s.at = Date.now();
   busy = false;
   persist(); drawAll(); refreshSend();
@@ -1418,6 +1457,7 @@ async function callApi(messages, sessionId){
     use_memory: conf.memory !== false,
     use_web: conf.web !== false,
     channel: sessionId === 'telegram' ? 'telegram' : undefined,
+    files: messages.at(-1)?.files?.map(f => f.path) || [],
   };
 
   // 默认地址是猜的，不是用户填的：它打不通只说明这份页面旁边没有后端，
@@ -1432,11 +1472,11 @@ async function callApi(messages, sessionId){
       body: JSON.stringify(body)
     });
   } catch (err) {
-    if (isDefault) return DEMO;
+    if (isDefault) return {text:DEMO,files:[]};
     throw err;
   }
   if (!res.ok){
-    if (isDefault && (res.status === 404 || res.status === 405)) return DEMO;
+    if (isDefault && (res.status === 404 || res.status === 405)) return {text:DEMO,files:[]};
     throw new Error('HTTP ' + res.status + ' ' + (res.statusText || ''));
   }
   const data = await res.json();
@@ -1445,7 +1485,8 @@ async function callApi(messages, sessionId){
     .map(b => b.text)
     .join('\n')
     .trim();
-  return text || (typeof data.text === 'string' ? data.text : '(服务器返回了空回复)');
+  return {text:text || (typeof data.text === 'string' ? data.text : '(服务器返回了空回复)'),
+          files:Array.isArray(data.files) ? data.files : []};
 }
 
 /* ---------- 代码块按钮（事件委托）---------- */
@@ -1484,6 +1525,19 @@ $('#btn-pic').onclick  = () => $('#file').click();
 document.querySelectorAll('.tab').forEach(b => { b.onclick = () => setTab(b.dataset.v); });
 document.querySelectorAll('[data-go-chat]').forEach(b => { b.onclick = () => setTab('chat'); });
 $('#list').addEventListener('click', e => {
+  const fileButton = e.target.closest('[data-file-path]');
+  if (fileButton){
+    const url = fileApiUrl(fileButton.dataset.filePath);
+    fetch(url, {headers:authHeaders(url)}).then(async res => {
+      if (!res.ok) throw new Error('下载失败：HTTP ' + res.status);
+      const blob = await res.blob();
+      const localUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = localUrl; link.download = fileButton.dataset.filePath.split('/').pop();
+      link.click(); setTimeout(() => URL.revokeObjectURL(localUrl), 30000);
+    }).catch(err => toast(err.message || '下载失败'));
+    return;
+  }
   const button = e.target.closest('[data-prompt]');
   if (!button) return;
   $('#input').value = button.dataset.prompt;
@@ -1495,8 +1549,11 @@ $('#file').onchange = async e => {
   const files = [...e.target.files].slice(0, 6);
   e.target.value = '';
   for (const f of files){
-    const src = await readImage(f);
-    if (src) pending.push(src);
+    if (f.type.startsWith('image/')){
+      const src = await readImage(f);
+      if (src) pending.push(src);
+    } else if (f.size <= 10 * 1024 * 1024) pendingFiles.push(f);
+    else toast(f.name + ' 超过 10 MB');
   }
   drawThumbs();
 };
@@ -1592,4 +1649,3 @@ setTab(load(KEY.tab, 'chat'));
 </script>
 </body>
 </html>
-

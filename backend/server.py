@@ -1,7 +1,13 @@
-import os, re, json, asyncio, base64, hmac, sqlite3, time, httpx
+import os, re, json, asyncio, base64, hmac, sqlite3, time, httpx, uuid, mimetypes, zipfile
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import unquote, quote
+from xml.etree import ElementTree
+from xml.sax.saxutils import escape as xml_escape
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 LLM_BACKEND = os.environ.get("LLM_BACKEND", "openrouter").strip().lower()
@@ -30,6 +36,14 @@ CLAUDE_STATUS = {"last_success_at": None}
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_OWNER_ID = os.environ.get("TELEGRAM_OWNER_ID", "").strip()
 TELEGRAM_DB = Path(os.environ.get("ALCOVE_DATA_DB", "/opt/alcove/alcove.sqlite3"))
+FILES_DIR = Path(os.environ.get("ALCOVE_FILES_DIR", "/opt/alcove/files"))
+FILE_MAX = 10 * 1024 * 1024
+TEXT_MAX = 200 * 1024
+TIMEZONE_NAME = os.environ.get("ALCOVE_TIMEZONE", "Asia/Shanghai")
+try:
+    LOCAL_TIMEZONE = ZoneInfo(TIMEZONE_NAME)
+except ZoneInfoNotFoundError as exc:
+    raise RuntimeError(f"Invalid ALCOVE_TIMEZONE: {TIMEZONE_NAME}") from exc
 if TELEGRAM_OWNER_ID and not TELEGRAM_OWNER_ID.isdigit():
     raise RuntimeError("TELEGRAM_OWNER_ID must be numeric")
 if TELEGRAM_TOKEN and len(ACCESS_TOKEN) < 32:
@@ -77,7 +91,11 @@ def _telegram_db():
                "id INTEGER PRIMARY KEY, role TEXT NOT NULL, text TEXT NOT NULL, "
                "origin TEXT UNIQUE, created_at INTEGER NOT NULL)")
     db.execute("CREATE TABLE IF NOT EXISTS tg_updates ("
-               "update_id INTEGER PRIMARY KEY, reply TEXT, delivered INTEGER NOT NULL DEFAULT 0)")
+               "update_id INTEGER PRIMARY KEY, reply TEXT, delivered INTEGER NOT NULL DEFAULT 0, "
+               "files_json TEXT NOT NULL DEFAULT '[]')")
+    columns = {row[1] for row in db.execute("PRAGMA table_info(tg_updates)")}
+    if "files_json" not in columns:
+        db.execute("ALTER TABLE tg_updates ADD COLUMN files_json TEXT NOT NULL DEFAULT '[]'")
     db.execute("CREATE TABLE IF NOT EXISTS tg_state ("
                "key TEXT PRIMARY KEY, value TEXT NOT NULL)")
     db.commit()
@@ -116,6 +134,192 @@ def _telegram_set_offset(offset: int) -> None:
                    (str(offset),))
 
 
+def _telegram_model() -> str:
+    with _telegram_db() as db:
+        row = db.execute("SELECT value FROM tg_state WHERE key = 'model'").fetchone()
+    return row[0] if row else CLAUDE_MODEL
+
+
+async def _telegram_command(text: str, client: httpx.AsyncClient, chat_id: int) -> bool | None:
+    command, _, arg = text.partition(" ")
+    command = command.split("@", 1)[0].lower()
+    if command == "/model":
+        choice = arg.strip().lower()
+        if choice in ("sonnet", "opus", "haiku"):
+            with _telegram_db() as db:
+                db.execute("INSERT OR REPLACE INTO tg_state(key, value) VALUES ('model', ?)",
+                           (choice,))
+            message = f"TG 模型已设为 {choice}。网页普通会话仍使用服务器默认模型。"
+        else:
+            message = f"当前 TG 模型：{_telegram_model()}。可用 /model sonnet、/model opus、/model haiku 切换。"
+    elif command == "/usage":
+        if LLM_BACKEND != "claude_code":
+            message = "当前不是 Claude Code 后端，无法读取订阅用量。"
+        elif PLAN_USAGE:
+            lines = [f"{name}: {value.get('used_percentage')}%（重置：{value.get('resets_at') or '未知'}）"
+                     for name, value in sorted(PLAN_USAGE.items())]
+            message = "最近一次用量快照：\n" + "\n".join(lines)
+        else:
+            message = "还没有收到 Claude Code 的用量快照；先对话一轮再试。"
+    elif command == "/help":
+        message = "直接发文字、图片或 10 MB 内的文档即可。/usage 看用量，/model 查看或切换 TG 模型。"
+    else:
+        return None
+    return await _telegram_send(client, chat_id, message, markdown=False)
+
+
+def _files_root() -> Path:
+    FILES_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    FILES_DIR.chmod(0o700)
+    (FILES_DIR / "inbox").mkdir(exist_ok=True, mode=0o700)
+    (FILES_DIR / "outbox").mkdir(exist_ok=True, mode=0o700)
+    return FILES_DIR.resolve()
+
+
+def _safe_filename(name: str) -> str:
+    name = Path(name.replace("\\", "/")).name
+    name = re.sub(r"[^\w.\- ()\u4e00-\u9fff]", "_", name, flags=re.UNICODE)
+    name = name.strip(". ")[:120]
+    return name or "file"
+
+
+def _file_path(relative: str, *, area: str | None = None) -> Path:
+    if not isinstance(relative, str) or not relative or relative.startswith("/"):
+        raise ValueError("无效文件路径")
+    parts = Path(relative).parts
+    if any(p in ("..", ".") for p in parts) or parts[0] not in ("inbox", "outbox"):
+        raise ValueError("只能访问文件工作区")
+    if area and parts[0] != area:
+        raise ValueError(f"只能写入 {area}/")
+    root = _files_root()
+    path = (root / relative).resolve()
+    if not path.is_relative_to(root) or path == root:
+        raise ValueError("文件路径超出工作区")
+    return path
+
+
+def _save_input(name: str, data: bytes, prefix: str) -> str:
+    if len(data) > FILE_MAX:
+        raise ValueError("文件超过 10 MB")
+    relative = f"inbox/{prefix}-{_safe_filename(name)}"
+    path = _file_path(relative, area="inbox")
+    try:
+        with path.open("xb") as stream:
+            stream.write(data)
+    except FileExistsError:
+        if not prefix.startswith("tg-"):
+            raise
+    path.chmod(0o600)
+    return relative
+
+
+def _read_document(relative: str) -> str:
+    path = _file_path(relative)
+    if not path.is_file():
+        raise ValueError("文件不存在")
+    if path.stat().st_size > FILE_MAX:
+        raise ValueError("文件超过 10 MB")
+    ext = path.suffix.lower()
+    if ext == ".docx":
+        with zipfile.ZipFile(path) as doc:
+            if doc.getinfo("word/document.xml").file_size > 2 * 1024 * 1024:
+                raise ValueError("DOCX 文本超过 2 MB")
+            xml = doc.read("word/document.xml")
+        root = ElementTree.fromstring(xml)
+        paragraphs = []
+        for paragraph in root.iter("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p"):
+            paragraphs.append("".join(n.text or "" for n in paragraph.iter(
+                "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t")))
+        text = "\n".join(paragraphs)
+    elif ext == ".pdf":
+        try:
+            from pypdf import PdfReader
+        except ImportError as exc:
+            raise ValueError("服务器需要安装 pypdf 才能读取 PDF") from exc
+        reader = PdfReader(path)
+        text = "\n".join(page.extract_text() or "" for page in reader.pages[:50])
+    else:
+        try:
+            text = path.read_text(encoding="utf-8-sig")
+        except (UnicodeError, ValueError) as exc:
+            raise ValueError("仅支持 UTF-8 文本、DOCX 和 PDF 文件") from exc
+    if len(text) > TEXT_MAX:
+        return text[:TEXT_MAX] + "\n[内容已截断；单次最多读取 200 KB 文本]"
+    return text
+
+
+def _write_docx(path: Path, content: str) -> None:
+    paragraphs = "".join(
+        '<w:p><w:r><w:t xml:space="preserve">' + xml_escape(line) + '</w:t></w:r></w:p>'
+        for line in content.split("\n")
+    )
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as doc:
+        doc.writestr("[Content_Types].xml",
+                     '<?xml version="1.0" encoding="UTF-8"?>'
+                     '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                     '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                     '<Default Extension="xml" ContentType="application/xml"/>'
+                     '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+                     '</Types>')
+        doc.writestr("_rels/.rels",
+                     '<?xml version="1.0" encoding="UTF-8"?>'
+                     '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                     '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+                     '</Relationships>')
+        doc.writestr("word/document.xml",
+                     '<?xml version="1.0" encoding="UTF-8"?>'
+                     '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                     '<w:body>' + paragraphs + '</w:body></w:document>')
+
+
+def _workspace_tools(produced: set[str]):
+    from claude_agent_sdk import tool, create_sdk_mcp_server
+
+    def result(value: str, error: bool = False) -> dict:
+        return {"content": [{"type": "text", "text": value}], "is_error": error}
+
+    @tool("list_files", "列出私有文件工作区 inbox/ 和 outbox/ 的文件", {})
+    async def list_files(_args):
+        root = _files_root()
+        files = []
+        for area in ("inbox", "outbox"):
+            files.extend(f"{p.relative_to(root)} ({p.stat().st_size} bytes)"
+                         for p in (root / area).iterdir() if p.is_file() and not p.is_symlink())
+        return result("\n".join(sorted(files)[-100:]) or "工作区里还没有文件")
+
+    @tool("read_file", "读取工作区内 UTF-8 文本、DOCX 或 PDF；path 为 inbox/ 或 outbox/ 开头", {"path": str})
+    async def read_file(args):
+        try:
+            return result(_read_document(args["path"]))
+        except (OSError, ValueError, KeyError, zipfile.BadZipFile, ElementTree.ParseError) as exc:
+            return result(str(exc), True)
+
+    @tool("write_file", "写入 UTF-8 文本或 DOCX 文件到 outbox/，生成后自动发送给用户；path 以 outbox/ 开头", {"path": str, "content": str})
+    async def write_file(args):
+        try:
+            relative, content = args["path"], args["content"]
+            path = _file_path(relative, area="outbox")
+            if path.parent != _files_root() / "outbox":
+                raise ValueError("输出文件只能放在 outbox/ 根目录")
+            if path.suffix.lower() not in (".txt", ".md", ".csv", ".json", ".html", ".xml", ".svg", ".py", ".js", ".css", ".yaml", ".yml", ".docx"):
+                raise ValueError("当前可输出文本、Markdown、CSV、JSON、DOCX、HTML、SVG 和代码文件")
+            data = content.encode("utf-8")
+            if len(data) > FILE_MAX:
+                raise ValueError("输出文件超过 10 MB")
+            if path.suffix.lower() == ".docx":
+                _write_docx(path, content)
+            else:
+                path.write_bytes(data)
+            path.chmod(0o600)
+            produced.add(relative)
+            return result(f"已保存 {relative} ({len(data)} bytes)，本轮结束后会发给用户")
+        except (OSError, ValueError, TypeError) as exc:
+            return result(str(exc), True)
+
+    return create_sdk_mcp_server(name="alcove_files", version="1.0.0",
+                                 tools=[list_files, read_file, write_file])
+
+
 async def _telegram_process(update: dict, client: httpx.AsyncClient) -> bool:
     update_id = update.get("update_id")
     message = update.get("message") or {}
@@ -129,19 +333,26 @@ async def _telegram_process(update: dict, client: httpx.AsyncClient) -> bool:
     if str(sender.get("id", "")) != TELEGRAM_OWNER_ID:
         return True
     text = (message.get("text") or message.get("caption") or "").strip()
-    file_id = _telegram_image_id(message)
-    if not text and not file_id:
+    image_id = _telegram_image_id(message)
+    document = message.get("document") or {}
+    document_id = document.get("file_id") if not image_id else None
+    if not text and not image_id and not document_id:
         return True  # 语音、贴纸之类暂时不处理
     chat_id = (message.get("chat") or {}).get("id")
     if not isinstance(chat_id, int):
         return True
-    # 数据库里只存文字；图片本身只在这一轮交给 Claude 看。
-    stored = ("[图片] " + text).strip() if file_id else text
+    if text.startswith("/") and not image_id and not document_id:
+        command_result = await _telegram_command(text, client, chat_id)
+        if command_result is not None:
+            return command_result
+    stored = ("[图片] " + text).strip() if image_id else text
+    if document_id:
+        stored = f"[文件: {_safe_filename(document.get('file_name') or 'file')}] {text}".strip()
 
     async with TELEGRAM_LOCK:
         with _telegram_db() as db:
             db.execute("INSERT OR IGNORE INTO tg_updates(update_id) VALUES (?)", (update_id,))
-            row = db.execute("SELECT reply, delivered FROM tg_updates WHERE update_id = ?",
+            row = db.execute("SELECT reply, delivered, files_json FROM tg_updates WHERE update_id = ?",
                              (update_id,)).fetchone()
         if row[1]:
             return True
@@ -149,8 +360,8 @@ async def _telegram_process(update: dict, client: httpx.AsyncClient) -> bool:
         reply = row[0]
         if reply is None:
             history = _telegram_history()
-            if file_id:
-                image = await _telegram_download_image(client, file_id)
+            if image_id:
+                image = await _telegram_download_image(client, image_id)
                 if image:
                     blocks = [{"type": "image", "source": {"type": "base64",
                                "media_type": image[0], "data": image[1]}},
@@ -159,24 +370,73 @@ async def _telegram_process(update: dict, client: httpx.AsyncClient) -> bool:
                 else:
                     history[-1] = {"role": "user",
                                    "content": stored + "（图片没能下载下来，看不到内容）"}
+            if document_id:
+                try:
+                    if (document.get("file_size") or 0) > FILE_MAX:
+                        raise ValueError("文件超过 10 MB")
+                    data = await _telegram_download_file(client, document_id)
+                    relative = _save_input(document.get("file_name") or "file", data,
+                                           f"tg-{update_id}")
+                    history[-1] = {"role": "user", "content":
+                                   f"{text}\n\n我上传了文件 {relative}。请按需要读取它。"}
+                except (httpx.HTTPError, ValueError, OSError) as exc:
+                    history[-1] = {"role": "user", "content":
+                                   f"{stored}\n\n文件接收失败：{type(exc).__name__}: {exc}"}
             typing = asyncio.create_task(_telegram_typing(client, chat_id))
+            produced: set[str] = set()
             try:
-                reply = await _answer(history, True, WEB_SEARCH_DEFAULT)
+                reply = await _answer(history, True, WEB_SEARCH_DEFAULT, produced,
+                                      _telegram_model())
             finally:
                 typing.cancel()
             with _telegram_db() as db:
-                db.execute("UPDATE tg_updates SET reply = ? WHERE update_id = ?",
-                           (reply, update_id))
+                db.execute("UPDATE tg_updates SET reply = ?, files_json = ? WHERE update_id = ?",
+                           (reply, json.dumps(sorted(produced)), update_id))
+            files = sorted(produced)
+        else:
+            files = json.loads(row[2])
         _telegram_append("assistant", reply, f"tg-reply:{update_id}")
 
         # Telegram sendMessage has no idempotency key: a network timeout after
         # delivery may result in a duplicate on retry. Keep the same reply text.
         if not await _telegram_send(client, chat_id, reply):
             return False
+        for relative in files:
+            if not await _telegram_send_document(client, chat_id, relative):
+                return False
         with _telegram_db() as db:
             db.execute("UPDATE tg_updates SET delivered = 1 WHERE update_id = ?",
                        (update_id,))
     return True
+
+
+async def _telegram_download_file(client: httpx.AsyncClient, file_id: str) -> bytes:
+    response = await client.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getFile",
+                                params={"file_id": file_id})
+    response.raise_for_status()
+    info = response.json().get("result") or {}
+    path = info.get("file_path")
+    if not path or (info.get("file_size") or 0) > FILE_MAX:
+        raise ValueError("Telegram 文件不可下载或超过 10 MB")
+    response = await client.get(f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{path}")
+    response.raise_for_status()
+    if len(response.content) > FILE_MAX:
+        raise ValueError("文件超过 10 MB")
+    return response.content
+
+
+async def _telegram_send_document(client: httpx.AsyncClient, chat_id: int, relative: str) -> bool:
+    path = _file_path(relative, area="outbox")
+    if not path.is_file():
+        return False
+    with path.open("rb") as stream:
+        response = await client.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument",
+            data={"chat_id": str(chat_id)},
+            files={"document": (path.name, stream, mimetypes.guess_type(path.name)[0] or "application/octet-stream")},
+        )
+    response.raise_for_status()
+    return bool(response.json().get("ok"))
 
 
 def _telegram_image_id(message: dict) -> str | None:
@@ -493,10 +753,12 @@ def _memory_mcp_config() -> dict:
 
 
 async def _claude_reply(msgs: list, system: str, use_web: bool,
-                        use_memory: bool = False) -> str:
+                        use_memory: bool = False,
+                        produced: set[str] | None = None,
+                        model: str | None = None) -> str:
     """Run the signed-in local Claude Code account through the official Agent SDK."""
     try:
-        from claude_agent_sdk import (query, ClaudeAgentOptions, AssistantMessage,
+        from claude_agent_sdk import (ClaudeSDKClient, ClaudeAgentOptions, AssistantMessage,
                                       ResultMessage, RateLimitEvent, TextBlock)
     except ImportError as exc:
         raise HTTPException(503, "服务器尚未安装 claude-agent-sdk") from exc
@@ -508,27 +770,37 @@ async def _claude_reply(msgs: list, system: str, use_web: bool,
 
     web_tools = ["WebSearch", "WebFetch"] if use_web else []
     memory_tools = [f"mcp__memory__{name}" for name in MEMORY_TOOLS] if use_memory else []
+    if produced is None:
+        produced = set()
+    file_server = _workspace_tools(produced)
+    file_tools = ["mcp__alcove_files__list_files", "mcp__alcove_files__read_file",
+                  "mcp__alcove_files__write_file"]
     options = ClaudeAgentOptions(
-        model=CLAUDE_MODEL,
+        model=model or CLAUDE_MODEL,
         system_prompt=system,
         tools=web_tools,
-        allowed_tools=web_tools + memory_tools,
-        mcp_servers={"memory": _memory_mcp_config()} if use_memory else {},
+        allowed_tools=web_tools + memory_tools + file_tools,
+        mcp_servers={**({"memory": _memory_mcp_config()} if use_memory else {}),
+                     "alcove_files": file_server},
+        strict_mcp_config=True,
         setting_sources=[],
         permission_mode="dontAsk",
-        max_turns=8 if (use_web or use_memory) else 1,
+        cwd=_files_root(),
+        max_turns=12,
     )
     last_text = ""
     final = None
     try:
-        async for event in query(prompt=prompt_stream(), options=options):
-            if isinstance(event, RateLimitEvent):
-                _record_plan_usage(event.rate_limit_info)
-            elif isinstance(event, AssistantMessage):
-                last_text = "\n".join(block.text for block in event.content
-                                      if isinstance(block, TextBlock)) or last_text
-            elif isinstance(event, ResultMessage):
-                final = event
+        async with ClaudeSDKClient(options=options) as client:
+            await client.query(prompt_stream())
+            async for event in client.receive_response():
+                if isinstance(event, RateLimitEvent):
+                    _record_plan_usage(event.rate_limit_info)
+                elif isinstance(event, AssistantMessage):
+                    last_text = "\n".join(block.text for block in event.content
+                                          if isinstance(block, TextBlock)) or last_text
+                elif isinstance(event, ResultMessage):
+                    final = event
     except Exception as exc:
         raise HTTPException(502, "Claude Code 调用失败：" + type(exc).__name__) from exc
     if final is None or final.is_error:
@@ -752,12 +1024,49 @@ async def telegram_history_endpoint(req: Request):
             "messages": _telegram_history(100) if TELEGRAM_TOKEN else []}
 
 
-async def _answer(msgs: list, use_memory: bool, use_web: bool) -> str:
+@app.post("/api/files")
+async def upload_file(req: Request):
+    _require_access(req)
+    if LLM_BACKEND != "claude_code":
+        raise HTTPException(503, "文件处理需要 Claude Code 后端")
+    name = _safe_filename(unquote(req.headers.get("x-file-name", "file")))
+    data = bytearray()
+    async for chunk in req.stream():
+        data.extend(chunk)
+        if len(data) > FILE_MAX:
+            raise HTTPException(413, "文件超过 10 MB")
+    if not data:
+        raise HTTPException(400, "文件为空")
+    relative = _save_input(name, bytes(data), f"web-{uuid.uuid4().hex[:12]}")
+    return {"path": relative, "name": name}
+
+
+@app.get("/api/files/{relative:path}")
+async def download_file(relative: str, req: Request):
+    _require_access(req)
+    try:
+        path = _file_path(relative, area="outbox")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not path.is_file():
+        raise HTTPException(404, "文件不存在")
+    return Response(path.read_bytes(), media_type=mimetypes.guess_type(path.name)[0] or "application/octet-stream",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(path.name)}"})
+
+
+async def _answer(msgs: list, use_memory: bool, use_web: bool,
+                  produced: set[str] | None = None,
+                  model: str | None = None) -> str:
     if not isinstance(msgs, list) or not msgs or not isinstance(msgs[-1], dict) \
             or msgs[-1].get("role") != "user":
         raise HTTPException(400, "最后一条消息必须是用户消息")
 
-    system_texts = ["你是克劳德。用中文，语气自然，不要客套。"]
+    now = datetime.now(LOCAL_TIMEZONE)
+    system_texts = [
+        "你是克劳德。用中文，语气自然，不要客套。",
+        f"当前时间：{now.strftime('%Y-%m-%d %H:%M:%S %A')}（{TIMEZONE_NAME}，UTC{now.strftime('%z')}）。"
+        "涉及今天、明天或时效性事实时，以此时间为准；不能把当前时间当作消息发送时间。",
+    ]
 
     # 转发给 LLM 前，先用最新一条用户消息检索记忆，拼成额外的 system 段落。
     if use_memory:
@@ -777,6 +1086,13 @@ async def _answer(msgs: list, use_memory: bool, use_web: bool) -> str:
             "反过来，记忆和对话里都没有的事，也不要说成自己记得。")
 
     if LLM_BACKEND == "claude_code":
+        system_texts.append(
+            "你有 alcove_files 工具，可列出文件、读取 inbox/ 或 outbox/ 内的文件，"
+            "并写出 outbox/ 下的 UTF-8 文本或 DOCX 文件。用户提供的文件路径会出现在消息里。"
+            "需要编辑文件时先读取内容，再把修改后的完整内容写到 outbox/；"
+            "写出的文件会自动作为附件回传。仅使用这些工具处理文件，不要声称已经发送未写出的文件。"
+            "可处理文本、DOCX 和 PDF 输入；PDF 读取依赖服务器安装 pypdf。"
+        )
         if use_memory:
             system_texts.append(
                 "你可以用 memory 工具翻你们共同的记忆库：breath 检索（不带 query 就是随机浮现），"
@@ -785,7 +1101,7 @@ async def _answer(msgs: list, use_memory: bool, use_web: bool) -> str:
                 "先用 breath 查一下再回答，别说自己不知道。"
                 "对方明确让你记住什么，或者聊到值得长期记住的事，就用 hold 存下来。"
                 "用工具时不用汇报过程，自然地回应就好。")
-        return await _claude_reply(msgs, "\n\n".join(system_texts), use_web, use_memory)
+        return await _claude_reply(msgs, "\n\n".join(system_texts), use_web, use_memory, produced, model)
 
     payload = {
         "model": MODEL,
@@ -813,6 +1129,34 @@ async def chat(req: Request):
     _require_access(req)
     body = await req.json()
     msgs = body.get("messages") or []
+    produced: set[str] = set()
+    attached = body.get("files") or []
+    if attached:
+        if LLM_BACKEND != "claude_code":
+            raise HTTPException(503, "文件处理需要 Claude Code 后端")
+        if not isinstance(attached, list) or len(attached) > 6:
+            raise HTTPException(400, "单次最多 6 个文件")
+        if not isinstance(msgs, list) or not msgs or not isinstance(msgs[-1], dict) \
+                or msgs[-1].get("role") != "user":
+            raise HTTPException(400, "文件必须附在用户消息上")
+        refs = []
+        for relative in attached:
+            try:
+                path = _file_path(relative, area="inbox")
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            if not path.is_file():
+                raise HTTPException(404, f"文件不存在：{relative}")
+            refs.append(relative)
+        msgs = [*msgs[:-1], dict(msgs[-1])]
+        content = msgs[-1].get("content")
+        note = "\n\n我上传了这些文件，请按需要读取：" + "、".join(refs)
+        if isinstance(content, str):
+            msgs[-1]["content"] = content + note
+        elif isinstance(content, list):
+            msgs[-1]["content"] = content + [{"type": "text", "text": note}]
+        else:
+            msgs[-1]["content"] = note
     if body.get("channel") == "telegram":
         if not TELEGRAM_TOKEN or not TELEGRAM_OWNER_ID:
             raise HTTPException(503, "Telegram 尚未连接")
@@ -823,7 +1167,8 @@ async def chat(req: Request):
             history = _telegram_history()
             answer = await _answer(history + [{"role": "user", "content": latest}],
                                    body.get("use_memory", True),
-                                   body.get("use_web", WEB_SEARCH_DEFAULT))
+                                   body.get("use_web", WEB_SEARCH_DEFAULT), produced,
+                                   _telegram_model())
             _telegram_append("user", latest)
             _telegram_append("assistant", answer)
             # Mirror the web turn into the owner's private Telegram chat.
@@ -835,12 +1180,15 @@ async def chat(req: Request):
                         raise RuntimeError("Telegram rejected the message")
                     if not await _telegram_send(client, int(TELEGRAM_OWNER_ID), "**Claude：**\n" + answer):
                         raise RuntimeError("Telegram rejected the reply")
+                    for relative in sorted(produced):
+                        if not await _telegram_send_document(client, int(TELEGRAM_OWNER_ID), relative):
+                            raise RuntimeError("Telegram rejected the file")
             except (httpx.HTTPError, RuntimeError):
                 TELEGRAM_STATUS.update(connected=False, error="SendMessageError")
     else:
         answer = await _answer(msgs, body.get("use_memory", True),
-                               body.get("use_web", WEB_SEARCH_DEFAULT))
-    return {"content": [{"type": "text", "text": answer}]}
+                               body.get("use_web", WEB_SEARCH_DEFAULT), produced)
+    return {"content": [{"type": "text", "text": answer}],
+            "files": [{"path": p, "name": Path(p).name} for p in sorted(produced)]}
 
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
-
+app.mount("/", StaticFiles(directory=os.environ.get("ALCOVE_STATIC_DIR", "static"), html=True), name="static")
