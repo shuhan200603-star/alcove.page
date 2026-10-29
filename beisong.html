@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="theme-color" content="#F2F4F6">
+  <title>51 天背诵日程 · 小房子</title>
+  <link rel="icon" href="icons/day.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/day-180.png">
+  <link rel="stylesheet" href="fonts/lxgwwenkai-regular.css">
+  <link rel="stylesheet" href="fonts/lxgwwenkai-light.css">
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #F2F4F6; --card: #FFFFFF; --card-2: #FAFBFC;
+      --ink: #16222E; --muted: #60707F; --faint: #738390;
+      --line: #DCE3E9; --line-soft: #E8EDF1;
+      --accent: #1D4E6E; --accent-soft: #E3EDF3;
+      --mark: #A8372A; --mark-soft: #F6E7E4;
+      --done: #2F6B4F; --done-soft: #E2EFE8;
+      --serif: 'LXGW WenKai', 'STKaiti', 'Kaiti SC', serif;
+      --sans: 'LXGW WenKai', 'STKaiti', 'Kaiti SC', -apple-system, 'PingFang SC', serif;
+      --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, monospace;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --paper: #0E151B; --card: #161F28; --card-2: #1A242E;
+        --ink: #E3EAF0; --muted: #A7B7C3; --faint: #91A0AD;
+        --line: #2A3742; --line-soft: #222E38;
+        --accent: #7FB8D9; --accent-soft: #1B2C38;
+        --mark: #E08A7C; --mark-soft: #32211F;
+        --done: #7FC2A1; --done-soft: #17281F;
+      }
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0; background: var(--paper); color: var(--ink);
+      font-family: var(--sans); font-size: 15px; line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, a, input { -webkit-tap-highlight-color: transparent; }
+    button { font: inherit; }
+    .wrap {
+      max-width: 860px; margin: 0 auto;
+      padding: calc(16px + env(safe-area-inset-top, 0px))
+        max(16px, env(safe-area-inset-right, 0px))
+        calc(56px + env(safe-area-inset-bottom, 0px))
+        max(16px, env(safe-area-inset-left, 0px));
+    }
+    .topline { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+    .back {
+      color: var(--accent); text-decoration: none; font-size: 14px; font-weight: 600;
+      min-height: 44px; display: inline-flex; align-items: center;
+    }
+    .back:focus-visible, .action:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    .topline .eyebrow { font: 12px var(--mono); color: var(--muted); }
+    h1 {
+      font-family: var(--serif); font-weight: 700; font-size: clamp(24px, 5.5vw, 33px);
+      letter-spacing: .02em; margin: 0 0 6px; text-wrap: balance;
+    }
+    .sub { color: var(--muted); font-size: 13.5px; margin: 0; }
+    .sub b { font-family: var(--mono); font-weight: 500; color: var(--ink); font-variant-numeric: tabular-nums; }
+    .status {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 1px;
+      background: var(--line); border: 1px solid var(--line); border-radius: 3px;
+      overflow: hidden; margin: 22px 0 10px;
+    }
+    .stat { background: var(--card); padding: 12px 14px; min-width: 0; }
+    .stat .k { font: 11px var(--mono); letter-spacing: .1em; color: var(--faint); }
+    .stat .v {
+      font: 600 21px/1.3 var(--mono); font-variant-numeric: tabular-nums; margin-top: 3px;
+    }
+    .stat .v small { font-size: 12px; font-weight: 400; color: var(--muted); margin-left: 2px; }
+    .stat.urgent .v { color: var(--mark); }
+    .bar { height: 5px; background: var(--line-soft); border-radius: 3px; overflow: hidden; }
+    .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .25s ease; }
+    .barnote {
+      display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+      font: 12px var(--mono); color: var(--muted); margin-top: 7px;
+      font-variant-numeric: tabular-nums;
+    }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 18px 0 0; }
+    .action {
+      min-height: 44px; border: 1px solid var(--line); border-radius: 4px;
+      background: var(--card); color: var(--accent); padding: 8px 14px;
+      cursor: pointer; font-size: 14px; font-weight: 600;
+    }
+    .action:active { transform: scale(.98); }
+    .action:disabled { color: var(--faint); cursor: default; opacity: .6; }
+    .howto {
+      border-left: 2px solid var(--accent); background: var(--card-2);
+      padding: 12px 14px; margin: 22px 0 0; font-size: 13.5px;
+      color: var(--muted); border-radius: 0 3px 3px 0; line-height: 1.75;
+    }
+    .howto b { color: var(--ink); font-weight: 600; }
+    section { margin-top: 34px; }
+    .phase {
+      display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+      padding-bottom: 8px; border-bottom: 1.5px solid var(--ink);
+    }
+    .phase h2 { font-family: var(--serif); font-weight: 700; font-size: 18px; margin: 0; letter-spacing: .03em; }
+    .phase .range { font: 12.5px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+    .phase .count { margin-left: auto; font: 12px var(--mono); color: var(--faint); font-variant-numeric: tabular-nums; }
+    .phase-note { font-size: 13px; color: var(--muted); margin: 9px 0 0; }
+    .subject { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; margin: 20px 0 7px; }
+    .subject .nm { font-family: var(--serif); font-weight: 500; font-size: 15px; }
+    .subject .meta { font: 11.5px var(--mono); color: var(--faint); font-variant-numeric: tabular-nums; }
+    ul.days {
+      list-style: none; margin: 0; padding: 0; border: 1px solid var(--line);
+      border-radius: 3px; overflow: hidden; background: var(--card);
+    }
+    li.day { border-top: 1px solid var(--line-soft); scroll-margin-top: 16px; }
+    li.day:first-child { border-top: 0; }
+    li.day label {
+      display: grid; grid-template-columns: 24px 46px minmax(0, 1fr);
+      gap: 0 11px; align-items: start; padding: 13px; cursor: pointer; min-height: 52px;
+    }
+    li.day input {
+      grid-column: 1; grid-row: 1; appearance: none; -webkit-appearance: none;
+      width: 20px; height: 20px; margin: 1px 0 0; border: 1.5px solid var(--faint);
+      border-radius: 3px; background: transparent; cursor: pointer; position: relative;
+    }
+    li.day input:checked { background: var(--done); border-color: var(--done); }
+    li.day input:checked::after {
+      content: ''; position: absolute; left: 6px; top: 2px; width: 5px; height: 10px;
+      border: solid var(--card); border-width: 0 2px 2px 0; transform: rotate(42deg);
+    }
+    li.day input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .dt {
+      grid-column: 2; grid-row: 1; font: 500 12.5px var(--mono); color: var(--muted);
+      font-variant-numeric: tabular-nums; padding-top: 2px;
+    }
+    .day-body { grid-column: 3; min-width: 0; }
+    .pg {
+      font: 600 12.5px var(--mono); color: var(--accent);
+      font-variant-numeric: tabular-nums; margin-right: 8px; white-space: nowrap;
+    }
+    .ch { font-size: 14px; line-height: 1.5; }
+    .nt { font-size: 12.5px; color: var(--muted); margin-top: 3px; line-height: 1.55; display: block; }
+    .nt .hot { color: var(--mark); font-weight: 600; }
+    .tag {
+      display: inline-block; font: 10.5px var(--mono); padding: 1px 5px;
+      border-radius: 2px; vertical-align: 1px; margin-right: 6px;
+      background: var(--accent-soft); color: var(--accent);
+    }
+    .tag.re { background: var(--card-2); color: var(--faint); border: 1px solid var(--line); }
+    .tag.hot { background: var(--mark-soft); color: var(--mark); }
+    .tag.nw { background: var(--mark); color: #fff; }
+    li.day.is-done { background: var(--done-soft); }
+    li.day.is-done .ch, li.day.is-done .dt { color: var(--muted); }
+    li.day.is-done .ch { text-decoration: line-through; text-decoration-color: var(--faint); text-decoration-thickness: 1px; }
+    li.day.today { box-shadow: inset 3px 0 0 var(--mark); }
+    li.day.today .dt { color: var(--mark); font-weight: 600; }
+    .exam {
+      margin-top: 34px; padding: 16px 18px; border: 1.5px solid var(--ink);
+      border-radius: 3px; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+    }
+    .exam .d { font: 600 17px var(--mono); font-variant-numeric: tabular-nums; }
+    .exam .t { font-family: var(--serif); font-weight: 500; }
+    .exam .s { color: var(--muted); font-size: 13px; }
+    footer { margin-top: 30px; font-size: 12.5px; color: var(--faint); line-height: 1.8; }
+    @media (max-width: 360px) {
+      li.day label { grid-template-columns: 23px 42px minmax(0, 1fr); gap: 0 7px; padding: 11px 9px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .bar i { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <div class="topline">
+      <a class="back" href="index.html" aria-label="返回小房子聊天首页">← 返回小房子</a>
+      <span class="eyebrow">2027 考研 · 专业课</span>
+    </div>
+    <h1>51 天背诵日程</h1>
+    <p class="sub">北师大法学 · 刑法 <b>113</b> 页 · 刑诉 <b>116</b> 页 · 法理 <b>74</b> 页 · 民诉框架 <b>56</b> 页 — 背诵主线 <b>359</b> 页</p>
+
+    <div class="status" aria-label="背诵进度">
+      <div class="stat" id="st-left"><div class="k">距初试</div><div class="v" id="v-left">—</div></div>
+      <div class="stat"><div class="k">已完成</div><div class="v"><span id="v-done">0</span><small>/ <span id="v-total">51</span> 天</small></div></div>
+      <div class="stat"><div class="k">今天</div><div class="v" id="v-today" style="font-size:15px;padding-top:4px">—</div></div>
+    </div>
+    <div class="bar" aria-hidden="true"><i id="bar"></i></div>
+    <div class="barnote"><span id="pct">0%</span><span id="sync" role="status">进度保存在当前浏览器</span></div>
+    <div class="actions">
+      <button class="action" id="go-today" type="button">跳到今天</button>
+      <button class="action" id="undo" type="button" aria-label="撤销上一步勾选操作" disabled>撤销上一步</button>
+    </div>
+    <div class="howto">
+      <b>每天开头 15 分钟先滚动复习</b>：口头复述昨天 + 三天前 + 上周同一天背过的章，卡住的地方再翻书。按 14 页/天的速度，不滚的话背到后面前面就空了，这一步比多背两页重要。<br>
+      <b>民诉用两本</b>：56 页框架版是背诵主线，131 页背诵版当血肉——框架上标 ★★ 和带真题的地方，翻正文把话补全。其他三科同理，框架为骨。<br>
+      <b>复习日</b>（标 <span class="tag re">复习</span>）是你之前背过的章，合上书先默，卡住才翻；<b>四要件</b>和 <span class="tag hot">高频</span> 的章不提速。勾错了可再点一次，也可以点上方“撤销上一步”。
+    </div>
+    <div id="plan"></div>
+    <div class="exam">
+      <span class="d">12/19 – 12/20</span>
+      <span class="t">初试</span>
+      <span class="s">考前一晚只翻口诀和全景图，不碰新东西</span>
+    </div>
+    <footer>
+      页码按你给我的五份 PDF 的实际页数排，民诉按 56 页框架版重算过。<br>
+      一轮 26 天比原来松了 2 天，省下的全给了二轮——二轮从 11 天加到 12 天，三轮从 7 天加到 8 天。
+    </footer>
+  </main>
+  <script>
+    const PLAN = [
+ {phase:"第一轮 · 把全书过完", range:"10/29 – 11/23", n:26,
+  note:"标准定在「合上书能把这一节的框架和关键词说出来」，不求整段默写。第一遍慢下来就全崩，这是唯一的硬约束。",
+  subs:[
+   {nm:"刑法", meta:"p.2–113 · 18 章总论 + 6 章分则 + 缺口补充 · 8 天", days:[
+    {id:"a1",d:"10/29",pg:"p.2–14",ch:"CH01–04 刑法论·犯罪构成　CH05 客体　CH06 客观方面",tag:"re",nt:"刑法论三章二十年才命中 5 次，快过。四要件从今天起按正常速度。"},
+    {id:"a2",d:"10/30",pg:"p.15–27",ch:"CH07 犯罪主体　CH08 犯罪主观方面",tag:"hot",nt:"你上次停在这里。<span class='hot'>四要件是全科重心</span>，这天不提速，认识错误和因果关系的错误要能自己讲出来。"},
+    {id:"a3",d:"10/31",pg:"p.28–41",ch:"CH09 正当行为　CH10 停止形态　CH11 共同犯罪",nt:"共犯是总论最难的一章，必要时借明天的时间。"},
+    {id:"a4",d:"11/01",pg:"p.42–57",ch:"CH12 罪数　CH13–16 刑罚概说·体系种类·裁量·裁量制度",nt:"刑罚论靠制度横向对比取胜，累犯／自首／立功／缓刑的条件画成一张表。"},
+    {id:"a5",d:"11/02",pg:"p.58–72",ch:"CH17 执行制度　CH18 消灭　CH19 危害公共安全　CH20 市场经济秩序",nt:"减刑·假释·时效·赦免四件事条件极混，和昨天的表格合并记。"},
+    {id:"a6",d:"11/03",pg:"p.73–85",ch:"CH21 人身权利　CH22 侵犯财产　CH23 妨害社会管理",nt:"分则按罪名群走，先记构成要件的分歧点，不背条文。"},
+    {id:"a7",d:"11/04",pg:"p.86–100",ch:"CH24 贪污贿赂　缺口补充（总论）",tag:"hot",nt:"缺口补充是<span class='hot'>真题考过但框架版没单列</span>的考点，优先级等同正文。"},
+    {id:"a8",d:"11/05",pg:"p.101–113",ch:"缺口补充（分则）",nt:"收尾日，顺手把刑法全景图的三段一条线口头走一遍。"}]},
+   {nm:"法理学", meta:"p.2–74 · 26 章 · 一页没背过 · 5 天", days:[
+    {id:"b1",d:"11/06",pg:"p.2–16",ch:"名解速查 + 大题速查　CH1–3（真题 0 题，扫过）　CH4 法·法律　CH5 渊源分类效力",nt:"开头两张速查表先读，知道哪些词反复考，后面背的时候心里有数。CH1–3 二十年 0 题，半小时过完。"},
+    {id:"b2",d:"11/07",pg:"p.17–27",ch:"CH6 法律体系　CH7 法的要素　CH8 权利义务　CH9 法律行为",tag:"hot",nt:"<span class='hot'>法的要素 11 题</span>，法律原则的适用是简答常客。"},
+    {id:"b3",d:"11/08",pg:"p.28–37",ch:"CH10 法律关系　CH11 法律责任　CH12 法的历史",tag:"hot",nt:"<span class='hot'>CH10 是全书真题最多的一章（18 题）</span>，权利能力考过 6 次，一字不差地背。"},
+    {id:"b4",d:"11/09",pg:"p.38–52",ch:"CH13 法律演进　CH14 全球化　CH15 法的制定　CH16 法的实施　CH17 法律程序　CH18 法律职业",nt:"章多但单章题少，按「这章在回答什么」串着走。"},
+    {id:"b5",d:"11/10",pg:"p.53–74",ch:"CH19 法律方法　CH20–26 法的价值与法治",tag:"hot",nt:"<span class='hot'>CH19 考 16 题</span>，法律解释的方法必背；CH20–26 是论述题主场，记骨架不记细节。"}]},
+   {nm:"民事诉讼法", meta:"框架版 p.1–56 · 24 章 · 6 天 · 配 131 页背诵版补血肉", days:[
+    {id:"c1",d:"11/11",pg:"p.1–9",ch:"全景图 · 五条线 · 真题七年总览　CH1 民诉与民诉法　CH2 诉权与诉",tag:"hot",nt:"前三页先读透，整本书围着「一个诉 = 主体 + 客体 + 原因事实」转。<span class='hot'>CH2 命中 8 次</span>，诉讼标的是 2025、2026 两道案例的理论底子。"},
+    {id:"c2",d:"11/12",pg:"p.10–18",ch:"CH3 基本原则　CH4 基本制度　CH5 受案范围　CH6 管辖",tag:"hot",nt:"CH3 论述考过 3 次（处分·检察监督·辩论）；<span class='hot'>CH6 管辖命中 6 次</span>，地域和裁定管辖是材料题常客。CH4、CH5 零题，扫过。"},
+    {id:"c3",d:"11/13",pg:"p.19–26",ch:"CH7 当事人　CH8 诉讼代理人　CH9 民事诉讼证据",tag:"hot",nt:"<span class='hot'>CH7 命中 15 次，全书第一</span>——适格·能力·诉讼担当·必要共同诉讼·无独三·诉讼地位，名解就出了 8 个。这天宁可超时。CH8 零题。"},
+    {id:"c4",d:"11/14",pg:"p.27–37",ch:"CH10 证明　CH11 诉讼保障　CH12 法院调解　CH13 一审普通程序　CH14 简易与小额",tag:"hot",nt:"证明责任的分配 2022、2025 两次论述原题；<span class='hot'>CH13 命中 8 次</span>（撤诉·中止·终结·缺席判决）。CH14 零题。"},
+    {id:"c5",d:"11/15",pg:"p.38–39、42–49",ch:"CH15 公益诉讼　CH18 裁判　CH19 上诉审　CH20 再审　CH21 第三人撤销之诉",nt:"跳过 p.40–41，那两页明天和其他新增章一起背。按救济线串：裁判未生效→上诉，已生效→再审，损害案外人→第三人撤销之诉。"},
+    {id:"c6",d:"11/16",pg:"p.40–41、50–56",ch:"CH16 在线诉讼　CH17 家事诉讼　CH22 特别程序　CH23 督促与公示催告　CH24 诉讼外对接　附 名解论述速查",tag:"nw",nt:"<span class='hot'>五个 2027 新增章集中成一天，共 8 页</span>。真题七年 0 题不是不考，是今年才进大纲——新增章通常是出题人想考的，而且全是条件清单，最适合出名解和简答。框架背完，再用背诵版那 27 页正文把条件补全。"}]},
+   {nm:"刑事诉讼法", meta:"p.6–116 · 28 章 + 295 条口诀 · 7 天", days:[
+    {id:"d1",d:"11/17",pg:"p.6–25",ch:"CH1–5 基础理论",tag:"re",nt:"复习速度。CH5 基本原则 16 个，论述考过 4 次，别一带而过。"},
+    {id:"d2",d:"11/18",pg:"p.26–44",ch:"CH6 管辖　CH7 回避　CH8 辩护与代理　CH9 强制措施",tag:"re",nt:"你上次停在这里。前三章快过，<span class='hot'>CH9 命中 12 次全书第三</span>，按「概念·适用情形·决定／执行机关·期限·违反后果」五格背。"},
+    {id:"d3",d:"11/19",pg:"p.45–62",ch:"CH10 附带民诉　CH11 期间送达　CH12 中止终止　CH13–15 证据·证据规则·证明",nt:"刑事证明命中 8 次、简答 6 次，是证据这块的重点。证明责任和标准跟民诉 CH10 对照着记，两科互相省力。"},
+    {id:"d4",d:"11/20",pg:"p.63–75",ch:"CH16 立案　CH17 侦查　CH18 起诉",tag:"hot",nt:"<span class='hot'>侦查 9 次、起诉 11 次</span>，侦查的 9 种行为和起诉的 4 种不起诉是名解产区。"},
+    {id:"d5",d:"11/21",pg:"p.76–90",ch:"CH19 第一审程序　CH20 第二审程序　CH21 死刑复核",tag:"hot",nt:"<span class='hot'>CH19 命中 16 次，全书第一</span>；二审的上诉不加刑这几年反复出案例。"},
+    {id:"d6",d:"11/22",pg:"p.91–105",ch:"CH22 审判监督　CH23 执行　CH24 未成年人　CH25 和解　CH26 缺席审判",nt:"审监 7 次、执行 5 次、未成年 5 次，都不低。缺席审判二十年没考过，扫一眼即可。"},
+    {id:"d7",d:"11/23",pg:"p.106–116",ch:"CH27 违法所得没收　CH28 强制医疗　口诀速查 295 条",nt:"最后一天把 295 个口诀过一遍，这是后面两轮的提速工具。"}]}]},
+
+ {phase:"第二轮 · 合上书默", range:"11/24 – 12/05", n:12,
+  note:"方式变了：先合上书默这一节的框架，卡住的地方再翻。★★ 以上和带真题标记的地方逐字过。速度大概是第一轮的三倍。",
+  subs:[{nm:"四科轮转", meta:"每科 3 天", days:[
+    {id:"e1",d:"11/24",pg:"p.2–45",ch:"刑法 · 刑法论 + 犯罪论全部",nt:""},
+    {id:"e2",d:"11/25",pg:"p.46–92",ch:"刑法 · 刑罚论 + 分则",nt:""},
+    {id:"e3",d:"11/26",pg:"p.93–113",ch:"刑法 · 缺口补充全部",nt:""},
+    {id:"e4",d:"11/27",pg:"p.6–44",ch:"刑诉 · 基础理论 + 基本制度",nt:""},
+    {id:"e5",d:"11/28",pg:"p.45–90",ch:"刑诉 · 证据证明 + 程序流到二审",nt:""},
+    {id:"e6",d:"11/29",pg:"p.91–116",ch:"刑诉 · 审监到特别程序 + 口诀",nt:""},
+    {id:"e7",d:"11/30",pg:"p.1–26",ch:"民诉 · 全景五条线 + CH1–9",nt:""},
+    {id:"e8",d:"12/01",pg:"p.27–49",ch:"民诉 · CH10–21",nt:""},
+    {id:"e9",d:"12/02",pg:"p.50–56",ch:"民诉 · 五个新增章 + 速查表 + 背诵版新增 27 页",tag:"nw",nt:"这天把新增章的正文细节补上，框架背过一遍了，只补条件和特点。"},
+    {id:"e10",d:"12/03",pg:"p.5–37",ch:"法理 · 法学基础到法的历史",nt:""},
+    {id:"e11",d:"12/04",pg:"p.38–60",ch:"法理 · 法的运行到法的价值",nt:""},
+    {id:"e12",d:"12/05",pg:"p.61–74",ch:"法理 · 人权与法治 + 速查表",nt:""}]}]},
+
+ {phase:"第三轮 · 只过高频", range:"12/06 – 12/13", n:8,
+  note:"不再通背。只过名解速查表、真题命中 3 次以上的节、论述骨架。这一轮的目的是让高频考点变成条件反射。",
+  subs:[{nm:"高频清单", meta:"按真题次数取舍 · 每科 2 天", days:[
+    {id:"f1",d:"12/06",pg:"刑法",ch:"四要件 · 共犯 · 停止形态",tag:"hot",nt:""},
+    {id:"f2",d:"12/07",pg:"刑法",ch:"裁量制度 + 分则高频罪名 + 缺口补充全部",tag:"hot",nt:""},
+    {id:"f3",d:"12/08",pg:"刑诉",ch:"五条线全景 + CH9 强制措施 · CH18 起诉 · CH19 一审 · CH22 审监",tag:"hot",nt:""},
+    {id:"f4",d:"12/09",pg:"刑诉",ch:"名解高频表 + 简答的情形清单（逮捕情形·简易程序范围等）+ 口诀",tag:"hot",nt:""},
+    {id:"f5",d:"12/10",pg:"民诉",ch:"CH7 当事人（15 次）· CH2 诉权与诉（8 次）· CH13 一审（8 次）",tag:"hot",nt:"民诉七年 35 个名解里 8 个考过两次，先把这批背到一字不差。"},
+    {id:"f6",d:"12/11",pg:"民诉",ch:"五条线 + CH6 管辖 · CH10 证明 · CH11 保障 + 五个新增章",tag:"hot",nt:""},
+    {id:"f7",d:"12/12",pg:"法理",ch:"名解速查全表 + CH10 法律关系",tag:"hot",nt:""},
+    {id:"f8",d:"12/13",pg:"法理",ch:"CH19 法律方法 + CH21 基本价值 + 论述骨架",tag:"hot",nt:""}]}]},
+
+ {phase:"冲刺 · 上考场的状态", range:"12/14 – 12/18", n:5,
+  note:"全部在纸上写，不在脑子里过。默写速度和字数是这五天唯一要练的东西。",
+  subs:[{nm:"真题与默写", meta:"按考试时长掐表", days:[
+    {id:"g1",d:"12/14",pg:"805",ch:"刑法 + 刑诉 近五年真题完整默写",nt:"掐表三小时，按名解 5×5 + 论述 25 + 案例 25 的真实配比。"},
+    {id:"g2",d:"12/15",pg:"704",ch:"法理 + 民诉 近五年真题完整默写",nt:"民诉也是名解 5×5 + 论述 25 + 案例 25，三小时。"},
+    {id:"g3",d:"12/16",pg:"四科",ch:"名解速查表全过 + 刑法缺口补充再看一遍",nt:"名解是最容易丢的分，也是最容易捡回来的。"},
+    {id:"g4",d:"12/17",pg:"大题",ch:"论述／材料骨架 + 四科全景图·五条线口头复述",nt:"论述题几乎全出自每科第一、二层（原则·地位·制度意义），骨架背熟就能写满。"},
+    {id:"g5",d:"12/18",pg:"收尾",ch:"薄弱处回看，整理考场用的口诀，早睡",nt:"这天不背新东西。"}]}]}
+];
+
+    const EXAM_DAY = Date.UTC(2026, 11, 19);
+    const ALL = PLAN.flatMap(p => p.subs.flatMap(s => s.days.map(d => d.id)));
+    const TOTAL = ALL.length;
+    const LS = 'beisong-v1';
+    const $ = id => document.getElementById(id);
+    let done = {};
+    let lastAction = null;
+    try {
+      const saved = JSON.parse(localStorage.getItem(LS) || '{}');
+      if (saved && typeof saved === 'object' && !Array.isArray(saved)) done = saved;
+    } catch (_) {
+      $('sync').textContent = '进度读取失败，当前只在本页有效';
+    }
+
+    function chinaToday() {
+      // 北京时间全年固定 UTC+8，用 UTC 读偏移后的日期，避免设备时区改变日程。
+      const d = new Date(Date.now() + 8 * 60 * 60 * 1000);
+      return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1,
+               day: d.getUTCDate(), weekday: d.getUTCDay() };
+    }
+    function todayIso(parts) {
+      return String(parts.year) + '-' + String(parts.month).padStart(2, '0') +
+        '-' + String(parts.day).padStart(2, '0');
+    }
+    function tagText(tag) {
+      return tag === 're' ? '复习' : (tag === 'nw' ? '2027 新增' : '高频');
+    }
+    function build() {
+      const plan = $('plan');
+      plan.innerHTML = PLAN.map(p => {
+        const ids = p.subs.flatMap(s => s.days.map(d => d.id));
+        return `<section>
+          <div class="phase">
+            <h2>${p.phase}</h2><span class="range">${p.range}</span>
+            <span class="count" data-phase="${ids.join(',')}">0 / ${ids.length}</span>
+          </div>
+          <p class="phase-note">${p.note}</p>
+          ${p.subs.map(s => `
+            <div class="subject"><span class="nm">${s.nm}</span><span class="meta">${s.meta}</span></div>
+            <ul class="days">${s.days.map(d => `
+              <li class="day" data-date="2026-${d.d.replace('/', '-')}" id="li-${d.id}">
+                <label>
+                  <input type="checkbox" id="chk-${d.id}" data-id="${d.id}" aria-label="${d.d} ${s.nm} ${d.ch.replace(/<[^>]+>/g, '')}">
+                  <span class="dt">${d.d}</span>
+                  <span class="day-body">
+                    <span class="ch"><span class="pg">${d.pg}</span>${d.tag ? `<span class="tag ${d.tag}">${tagText(d.tag)}</span>` : ''}${d.ch}</span>
+                    ${d.nt ? `<span class="nt">${d.nt}</span>` : ''}
+                  </span>
+                </label>
+              </li>`).join('')}</ul>`).join('')}
+        </section>`;
+      }).join('');
+    }
+    function paint() {
+      for (const id of ALL) {
+        const box = document.querySelector(`input[data-id="${id}"]`);
+        if (!box) continue;
+        const checked = done[id] === true;
+        box.checked = checked;
+        box.closest('.day').classList.toggle('is-done', checked);
+      }
+      const n = ALL.filter(id => done[id] === true).length;
+      $('v-done').textContent = n;
+      $('v-total').textContent = TOTAL;
+      $('bar').style.width = Math.round(n / TOTAL * 100) + '%';
+      $('pct').textContent = Math.round(n / TOTAL * 100) + '% · 还剩 ' + (TOTAL - n) + ' 天的任务';
+      document.querySelectorAll('[data-phase]').forEach(el => {
+        const ids = el.dataset.phase.split(',');
+        el.textContent = ids.filter(id => done[id] === true).length + ' / ' + ids.length;
+      });
+      $('undo').disabled = lastAction === null;
+    }
+    function save() {
+      try {
+        localStorage.setItem(LS, JSON.stringify(done));
+        $('sync').textContent = '进度保存在当前浏览器';
+      } catch (_) {
+        $('sync').textContent = '保存失败，当前进度只在本页有效';
+      }
+    }
+    function refreshDate() {
+      const t = chinaToday();
+      const left = Math.round((EXAM_DAY - Date.UTC(t.year, t.month - 1, t.day)) / 86400000);
+      $('v-left').innerHTML = left > 0 ? left + '<small>天</small>' : (left === 0 ? '今天' : '已结束');
+      $('st-left').classList.toggle('urgent', left >= 0 && left <= 14);
+      $('v-today').textContent = t.month + '月' + t.day + '日 周' + '日一二三四五六'[t.weekday];
+      const today = todayIso(t);
+      document.querySelectorAll('.day').forEach(li => li.classList.toggle('today', li.dataset.date === today));
+    }
+    $('plan').addEventListener('change', event => {
+      const box = event.target;
+      if (!box.matches('input[type="checkbox"][data-id]')) return;
+      const id = box.dataset.id;
+      lastAction = { id, before: done[id] === true };
+      if (box.checked) done[id] = true;
+      else delete done[id];
+      paint();
+      save();
+    });
+    $('undo').addEventListener('click', () => {
+      if (!lastAction) return;
+      const { id, before } = lastAction;
+      lastAction = null;
+      if (before) done[id] = true;
+      else delete done[id];
+      paint();
+      save();
+      $('chk-' + id)?.focus();
+    });
+    $('go-today').addEventListener('click', () => {
+      const target = document.querySelector('.day.today');
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      else $('sync').textContent = '今天不在这 51 天日程内';
+    });
+    window.addEventListener('storage', event => {
+      if (event.key !== LS) return;
+      try {
+        const saved = JSON.parse(event.newValue || '{}');
+        if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return;
+        done = saved; lastAction = null; paint();
+        $('sync').textContent = '已从本浏览器其他页面更新进度';
+      } catch (_) {}
+    });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshDate(); });
+    build();
+    paint();
+    refreshDate();
+    setInterval(refreshDate, 60 * 1000);
+  </script>
+</body>
+</html>

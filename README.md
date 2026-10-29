@@ -1,6 +1,6 @@
 # Alcove
 
-一个单页聊天前端。iOS 液态玻璃质感、多会话、六套主题、可发图片、可添加到主屏幕。
+一个聊天前端，附有独立的 51 天背诵打卡页。iOS 液态玻璃质感、多会话、六套主题、可发图片、可添加到主屏幕。
 
 线上地址：<https://alcove.page>
 
@@ -9,12 +9,19 @@
 | 文件 | 说明 |
 |---|---|
 | `index.html` | 全部界面与逻辑，无构建步骤 |
+| `beisong.html` | 2026/10/29–12/18 的 51 天背诵打卡页 |
 | `fonts/` | 霞鹜文楷 Regular / Light，自托管 |
 | `manifest.webmanifest` | PWA 清单 |
 | `icons/` | 三套图标，各 4 个尺寸 + SVG 源文件 |
 | `sw.js` | 墓碑 Service Worker，清掉旧版本留下的缓存 |
 | `backend/server.py` | FastAPI 后端：Claude Code Agent SDK、Telegram、文件工作区、记忆库 |
 | `deploy.sh` | 服务器上一步部署 |
+
+## 背诵打卡
+
+从首页「进度」进入 `beisong.html`。勾选任务后会立即保存；再点一次可取消，页面上的「撤销上一步」可恢复最近一次误操作。页面显示北京时间的今天和考前倒计时，跨天无需刷新。
+
+打卡进度保存在当前浏览器的 `localStorage`，同一设备的其他浏览器、Telegram 内置浏览器和其他设备不会自动同步。请固定从同一个入口使用。页面本身是公开静态文件；`noindex` 只建议搜索引擎不要收录，不能限制访问。
 
 ## 部署
 
